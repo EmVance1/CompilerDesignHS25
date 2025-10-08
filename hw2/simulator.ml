@@ -143,12 +143,25 @@ let sbytes_of_data : data -> sbyte list = function
 let debug_simulator = ref false
 
 (* Interpret a condition code with respect to the given flags. *)
-let interp_cnd {fo; fs; fz} : cnd -> bool = fun x -> failwith "interp_cnd unimplemented"
+let interp_cnd {fo; fs; fz} : cnd -> bool = function
+  | Eq  -> fz
+  | Neq -> not fz
+  | Gt  -> not fz && (fs = fo)
+  | Ge  -> fs = fo
+  | Lt  -> fs <> fo
+  | Le  -> fz || (fs <> fo)
+  (* fun x -> failwith "interp_cnd unimplemented" *)
 
 (* Maps an X86lite address into Some OCaml array index,
    or None if the address is not within the legal address space. *)
 let map_addr (addr:quad) : int option =
-failwith "map_addr not implemented"
+  if addr < mem_bot || addr >= mem_top then
+    None
+  else
+    let offset = Int64.sub addr mem_bot in
+    Some (Int64.to_int offset)
+
+(* failwith "map_addr not implemented" *)
 
 (* Simulates one step of the machine:
     - fetch the instruction at %rip
@@ -158,7 +171,7 @@ failwith "map_addr not implemented"
     - set the condition flags
 *)
 let step (m:mach) : unit =
-failwith "step unimplemented"
+  failwith "step unimplemented"
 
 (* Runs the machine until the rip register reaches a designated
    memory address. Returns the contents of %rax when the 

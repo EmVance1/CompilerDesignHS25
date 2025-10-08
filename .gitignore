@@ -1,3 +1,9 @@
 hw1
 */_build
-
+*.cmi
+*.cmo
+*.cmx
+*.o
+.merlin
+*.byte
+main.native
