@@ -184,7 +184,7 @@ let eval_addr_opnd (op:operand) (mach:mach) : quad = failwith "unimplemented"
       | Lit l -> l
       | Lbl _ -> failwith "label is not a numerical value"
     end
-    | Reg reg -> regs.(rind reg)
+    | Reg reg -> mach.regs.(rind reg)
     | Ind1 imm ->
     | Ind2 reg ->
     | Ind3 (imm, reg) ->
@@ -198,12 +198,41 @@ let set_flags ((quad, fo):(quad * bool)) (flags:flags) : quad =
     flags.fo <- fo;
     quad;;
 
+let rec imm_valueof (imm:imm) : quad =
+    match imm with
+      | Lit l -> l
+      | Lbl _ -> failwith "label is not a numerical value"
+
+let rec mem_write_i64 (mem:mem) (idx:int) (value:sbyte list) : unit =
+    match value with
+      | [] -> ()
+      | h::tl -> mem.(idx) <- h; mem_write_i64 mem (idx+1) tl
 
 (* writes a computed result to its destination *)
-let writeback (dest:operand) (value:quad) (mach:mach) : unit = failwith "unimplemented"
+let writeback (dest:operand) (value:quad) (mach:mach) : unit =
+  match dest with
+    | Imm _ -> failwith "cannot write to an immediate value"
+    | Reg reg -> mach.regs.(rind reg) <- value
+    | Ind1 imm -> failwith "unimplemented"
+    | Ind2 reg -> (
+        let reg = mach.regs.(rind reg) in
+        let ptr = (match (map_addr reg) with
+          | Some ptr -> ptr
+          | None -> failwith "reg did not contain a valid memory address") in
+
+          mem_write_i64 mach.mem ptr (sbytes_of_int64 value)
+    )
+    | Ind3 (imm, reg) -> (
+        let reg = mach.regs.(rind reg) in
+        let ptr = (match (map_addr reg) with
+          | Some ptr -> ptr + (Int64.to_int (imm_valueof imm))
+          | None -> failwith "reg did not contain a valid memory address") in
+
+          mem_write_i64 mach.mem ptr (sbytes_of_int64 value)
+    )
 
 
-let sign_bit (quad:quad) : quad = Int64.shift_right_logical (Int64.logand quad Int64.min_int) 63
+let sign_bit (quad:quad) : quad = Int64.logand (Int64.shift_right quad 63) 1L
 
 (* determines the status of the 'FO' register after an operation *)
 let arith_sets_fo (ins:opcode) (s64:quad) (d64:quad) (r64:quad) (fo:bool) : bool =
