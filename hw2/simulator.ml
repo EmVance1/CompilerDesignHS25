@@ -161,7 +161,73 @@ let map_addr (addr:quad) : int option =
     let offset = Int64.sub addr mem_bot in
     Some (Int64.to_int offset)
 
-(* failwith "map_addr not implemented" *)
+
+(* use to convert arithmetic instruction operands to qwords, unfinished *)
+let eval_num_opnd (op:operand) (mach:mach) : quad = failwith "unimplemented"
+  (*
+  match op with
+    | Imm imm -> match imm with
+      | Lit l -> l
+      | Lbl _ -> failwith "label is not a numerical value"
+    end
+    | Reg reg -> regs.(rind reg)
+    | Ind1 imm ->
+    | Ind2 reg ->
+    | Ind3 (imm, reg) ->
+  *)
+
+
+(* use to convert arithmetic instruction operands to qwords, unfinished *)
+let set_flags (quad:quad) (flags:flags) : quad =
+    if quad = 0L then (
+        flags.fo <- false; (* unimplemented *)
+        flags.fs <- false;
+        flags.fz <- true;
+    ) else if quad < 0L then (
+        flags.fo <- false; (* unimplemented *)
+        flags.fs <- true;
+        flags.fz <- false;
+    ) else (
+        flags.fo <- false; (* unimplemented *)
+        flags.fs <- false;
+        flags.fz <- false;
+    ); quad;;
+
+
+(* evaluates all arithmetic instructions with 1 operand, sets status flags *)
+let eval_unary (ins:opcode) (ops:operand list) (mach:mach) : quad =
+  let result = (match (ins, ops) with
+    | (Incq, [v]) -> Int64.add (eval_num_opnd v mach) 1L
+    | (Decq, [v]) -> Int64.sub (eval_num_opnd v mach) 1L
+    | (Negq, [v]) -> Int64.neg (eval_num_opnd v mach)
+    | (Notq, [v]) -> if (eval_num_opnd v mach) > 0L then 0L else 1L
+    | _ -> failwith "unary math instruction expects 1 operand(s)") in
+        set_flags result mach.flags
+
+(* evaluates all arithmetic instructions with 2 operands, sets status flags *)
+let eval_binary (ins:opcode) (ops:operand list) (mach:mach) : quad =
+  let result = (match (ins, ops) with
+    | Addq,  [lhs; rhs] -> Int64.add    (eval_num_opnd lhs mach) (eval_num_opnd rhs mach)
+    | Subq,  [lhs; rhs] -> Int64.sub    (eval_num_opnd lhs mach) (eval_num_opnd rhs mach)
+    | Imulq, [lhs; rhs] -> Int64.mul    (eval_num_opnd lhs mach) (eval_num_opnd rhs mach)
+    | Xorq,  [lhs; rhs] -> Int64.logxor (eval_num_opnd lhs mach) (eval_num_opnd rhs mach)
+    | Orq,   [lhs; rhs] -> Int64.logor  (eval_num_opnd lhs mach) (eval_num_opnd rhs mach)
+    | Andq,  [lhs; rhs] -> Int64.logand (eval_num_opnd lhs mach) (eval_num_opnd rhs mach)
+    | _ -> failwith "binary math instruction expects 2 operand(s)") in
+        set_flags result mach.flags
+
+let eval_instr ((ins, ops):(opcode * operand list)) (mach:mach) : unit = failwith ""
+  (*
+  match ins with
+    | Movq | Pushq | Popq
+    | Leaq
+    | Incq | Decq | Negq  | Notq -> eval_unary ins ops mach
+    | Addq | Subq | Imulq | Xorq | Orq | Andq -> eval_binary ins ops mach
+    | Shlq | Sarq | Shrq
+    | Jmp | J of cnd
+    | Cmpq  | Set of cnd
+    | Callq | Retq
+  *)
 
 (* Simulates one step of the machine:
     - fetch the instruction at %rip
@@ -170,8 +236,16 @@ let map_addr (addr:quad) : int option =
     - update the registers and/or memory appropriately
     - set the condition flags
 *)
-let step (m:mach) : unit =
-  failwith "step unimplemented"
+let step { flags: flags; regs: regs; mem: mem } : unit =
+  let rip_val = regs.(rind Rip) in
+  let mem_loc = (match (map_addr rip_val) with
+    | Some loc -> loc
+    | None -> failwith "rip did not contain a valid memory address") in
+  let ins = mem.(mem_loc) in
+    begin match ins with
+      | InsB0 ins -> eval_instr ins { flags=flags; regs=regs; mem=mem }
+      | _ -> failwith "rip did not point to valid instruction"
+    end
 
 (* Runs the machine until the rip register reaches a designated
    memory address. Returns the contents of %rax when the 

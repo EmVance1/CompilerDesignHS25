@@ -6,4 +6,6 @@ hw1
 *.o
 .merlin
 *.byte
+*/dune
+*/dune-project
 main.native
