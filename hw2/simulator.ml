@@ -162,7 +162,7 @@ let map_addr (addr:quad) : int option =
     Some (Int64.to_int offset)
 
 
-(* use to convert arithmetic instruction operands to qwords, unfinished *)
+(* use to convert value-type operands to qwords, unfinished *)
 let eval_num_opnd (op:operand) (mach:mach) : quad = failwith "unimplemented"
   (*
   match op with
@@ -176,58 +176,98 @@ let eval_num_opnd (op:operand) (mach:mach) : quad = failwith "unimplemented"
     | Ind3 (imm, reg) ->
   *)
 
-
-(* use to convert arithmetic instruction operands to qwords, unfinished *)
-let set_flags (quad:quad) (flags:flags) : quad =
-    if quad = 0L then (
-        flags.fo <- false; (* unimplemented *)
-        flags.fs <- false;
-        flags.fz <- true;
-    ) else if quad < 0L then (
-        flags.fo <- false; (* unimplemented *)
-        flags.fs <- true;
-        flags.fz <- false;
-    ) else (
-        flags.fo <- false; (* unimplemented *)
-        flags.fs <- false;
-        flags.fz <- false;
-    ); quad;;
-
-
-(* evaluates all arithmetic instructions with 1 operand, sets status flags *)
-let eval_unary (ins:opcode) (ops:operand list) (mach:mach) : quad =
-  let result = (match (ins, ops) with
-    | (Incq, [v]) -> Int64.add (eval_num_opnd v mach) 1L
-    | (Decq, [v]) -> Int64.sub (eval_num_opnd v mach) 1L
-    | (Negq, [v]) -> Int64.neg (eval_num_opnd v mach)
-    | (Notq, [v]) -> if (eval_num_opnd v mach) > 0L then 0L else 1L
-    | _ -> failwith "unary math instruction expects 1 operand(s)") in
-        set_flags result mach.flags
-
-(* evaluates all arithmetic instructions with 2 operands, sets status flags *)
-let eval_binary (ins:opcode) (ops:operand list) (mach:mach) : quad =
-  let result = (match (ins, ops) with
-    | Addq,  [lhs; rhs] -> Int64.add    (eval_num_opnd lhs mach) (eval_num_opnd rhs mach)
-    | Subq,  [lhs; rhs] -> Int64.sub    (eval_num_opnd lhs mach) (eval_num_opnd rhs mach)
-    | Imulq, [lhs; rhs] -> Int64.mul    (eval_num_opnd lhs mach) (eval_num_opnd rhs mach)
-    | Xorq,  [lhs; rhs] -> Int64.logxor (eval_num_opnd lhs mach) (eval_num_opnd rhs mach)
-    | Orq,   [lhs; rhs] -> Int64.logor  (eval_num_opnd lhs mach) (eval_num_opnd rhs mach)
-    | Andq,  [lhs; rhs] -> Int64.logand (eval_num_opnd lhs mach) (eval_num_opnd rhs mach)
-    | _ -> failwith "binary math instruction expects 2 operand(s)") in
-        set_flags result mach.flags
-
-let eval_instr ((ins, ops):(opcode * operand list)) (mach:mach) : unit = failwith ""
+(* use to convert address-type operands to qwords, unfinished *)
+let eval_addr_opnd (op:operand) (mach:mach) : quad = failwith "unimplemented"
   (*
-  match ins with
-    | Movq | Pushq | Popq
-    | Leaq
-    | Incq | Decq | Negq  | Notq -> eval_unary ins ops mach
-    | Addq | Subq | Imulq | Xorq | Orq | Andq -> eval_binary ins ops mach
-    | Shlq | Sarq | Shrq
-    | Jmp | J of cnd
-    | Cmpq  | Set of cnd
-    | Callq | Retq
+  match op with
+    | Imm imm -> match imm with
+      | Lit l -> l
+      | Lbl _ -> failwith "label is not a numerical value"
+    end
+    | Reg reg -> regs.(rind reg)
+    | Ind1 imm ->
+    | Ind2 reg ->
+    | Ind3 (imm, reg) ->
   *)
+
+
+(* use to convert arithmetic instruction operands to qwords *)
+let set_flags ((quad, fo):(quad * bool)) (flags:flags) : quad =
+    flags.fz <- quad = 0L;
+    flags.fs <- quad < 0L;
+    flags.fo <- fo;
+    quad;;
+
+
+(* writes a computed result to its destination *)
+let writeback (dest:operand) (value:quad) (mach:mach) : unit = failwith "unimplemented"
+
+
+let sign_bit (quad:quad) : quad = Int64.shift_right_logical (Int64.logand quad Int64.min_int) 63
+
+(* determines the status of the 'FO' register after an operation *)
+let arith_sets_fo (ins:opcode) (s64:quad) (d64:quad) (r64:quad) (fo:bool) : bool =
+  match ins with
+    | Addq  -> sign_bit d64 = sign_bit s64 && sign_bit r64 <> sign_bit s64
+    | Subq  -> (sign_bit d64 = sign_bit (Int64.neg s64) && sign_bit r64 <> sign_bit (Int64.neg s64)) || s64 = Int64.min_int
+    | Imulq -> failwith "unimplemented"
+    | Incq  -> sign_bit d64 = 0L && sign_bit r64 <> 0L
+    | Decq  -> sign_bit d64 = 1L && sign_bit r64 <> 1L
+    | Negq  -> d64 = Int64.min_int
+    | Notq  -> fo
+    | Xorq | Orq | Andq -> false
+    | _ -> failwith "opcode is not an arithmetic/logic operation"
+
+(* the function to be applied to operands for binary operations *)
+let arith_func_binary (ins:opcode) : quad -> quad -> quad =
+  match ins with
+    | Addq  -> Int64.add
+    | Subq  -> Int64.sub
+    | Imulq -> Int64.mul
+    | Xorq  -> Int64.logxor
+    | Orq   -> Int64.logor
+    | Andq  -> Int64.logand
+    | _ -> failwith "opcode is not an arithmetic/logic operation"
+
+(* the function to be applied to operands for unary operations *)
+let arith_func_unary (ins:opcode) : quad -> quad =
+  match ins with
+    | Incq  -> Int64.add 1L
+    | Decq  -> Int64.add (-1L)
+    | Negq  -> Int64.neg
+    | Notq  -> fun v -> (if v = 0L then 1L else 0L)
+    | _ -> failwith "opcode is not an arithmetic/logic operation"
+
+
+let eval_instr ((ins, ops):(opcode * operand list)) (mach:mach) : unit =
+  match ins with
+    | Movq | Pushq | Popq -> failwith "unimplemented"
+    | Leaq -> failwith "unimplemented"
+    | Incq | Decq | Negq  | Notq -> (
+      match ops with
+        | [dest] ->
+            let d64 = eval_num_opnd dest mach in
+            let r64 = (arith_func_unary ins) d64 in
+            let fo  = arith_sets_fo ins 0L d64 r64 mach.flags.fo in
+                writeback dest (set_flags (r64, fo) mach.flags) mach
+        | _ -> failwith "unary math instruction expects 1 operand(s)"
+    )
+    | Addq | Subq | Imulq | Xorq | Orq | Andq -> (
+      match ops with
+        | [src; dest] ->
+            let s64 = eval_num_opnd src mach in
+            let d64 = eval_num_opnd dest mach in
+            let r64 = (arith_func_binary ins) s64 d64 in
+            let fo  = arith_sets_fo ins s64 d64 r64 mach.flags.fo in
+                writeback dest (set_flags (r64, fo) mach.flags) mach
+        | _ -> failwith "binary math instruction expects 2 operand(s)"
+    )
+    | Shlq | Sarq | Shrq -> failwith "unimplemented"
+    | Jmp -> failwith "unimplemented"
+    | J cnd -> failwith "unimplemented"
+    | Cmpq -> failwith "unimplemented"
+    | Set cnd -> failwith "unimplemented"
+    | Callq | Retq -> failwith "unimplemented"
 
 (* Simulates one step of the machine:
     - fetch the instruction at %rip
