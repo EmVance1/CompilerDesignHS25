@@ -248,7 +248,13 @@ let arith_sets_fo (ins:opcode) (s64:quad) (d64:quad) (r64:quad) (fo:bool) : bool
   match ins with
     | Addq  -> sign_bit d64 = sign_bit s64 && sign_bit r64 <> sign_bit s64
     | Subq  -> (sign_bit d64 = sign_bit (Int64.neg s64) && sign_bit r64 <> sign_bit (Int64.neg s64)) || s64 = Int64.min_int
-    | Imulq -> failwith "unimplemented"
+    | Imulq -> 
+      let open Int64 in
+      let r_sign = logand (shift_right r64 63) 1L in
+      let d_sign = logand (shift_right d64 63) 1L in
+      let s_sign = logand (shift_right s64 63) 1L in
+      let expected_sign = logxor d_sign s_sign in
+      r_sign <> expected_sign
     | Incq  -> sign_bit d64 = 0L && sign_bit r64 <> 0L
     | Decq  -> sign_bit d64 = 1L && sign_bit r64 <> 1L
     | Negq  -> d64 = Int64.min_int
@@ -272,7 +278,7 @@ let shift_sets_fo (ins:opcode) (a32:int) (d64:quad) (fo:bool) : bool =
 let arith_func_binary (ins:opcode) : quad -> quad -> quad =
   match ins with
     | Addq  -> Int64.add
-    | Subq  -> Int64.sub
+    | Subq  -> fun x y -> Int64.sub y x
     | Imulq -> Int64.mul
     | Xorq  -> Int64.logxor
     | Orq   -> Int64.logor
