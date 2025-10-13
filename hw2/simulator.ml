@@ -277,23 +277,22 @@ let shift_sets_fo (ins:opcode) (a32:int) (d64:quad) (fo:bool) : bool =
     | Shrq -> d64 < 0L
     | _ -> failwith "opcode is not an shift operation"
 
-open Int64_overflow
 
 (* the function to be applied to operands for unary operations *)
-let arith_func_unary (ins:opcode) (fo:bool) : quad -> t =
+let arith_func_unary (ins:opcode) (fo:bool) : quad -> Int64_overflow.t =
   match ins with
-    | Incq  -> succ
-    | Decq  -> pred
-    | Negq  -> neg
+    | Incq  -> Int64_overflow.succ
+    | Decq  -> Int64_overflow.pred
+    | Negq  -> Int64_overflow.neg
     | Notq  -> fun v -> { value = if v = 0L then 1L else 0L; overflow = fo }
     | _ -> failwith "opcode is not an arithmetic/logic operation"
 
 (* the function to be applied to operands for binary operations *)
-let arith_func_binary (ins:opcode) : quad -> quad -> t =
+let arith_func_binary (ins:opcode) : quad -> quad -> Int64_overflow.t =
   match ins with
-    | Addq  -> add
-    | Subq  -> fun x y -> sub y x
-    | Imulq -> mul
+    | Addq  -> Int64_overflow.add
+    | Subq  -> fun x y -> Int64_overflow.sub y x
+    | Imulq -> Int64_overflow.mul
     | Xorq  -> fun a b -> { value = Int64.logxor a b; overflow = false }
     | Orq   -> fun a b -> { value = Int64.logor  a b; overflow = false }
     | Andq  -> fun a b -> { value = Int64.logand a b; overflow = false }
@@ -393,7 +392,7 @@ let eval_instr ((ins, ops):(opcode * operand list)) (mach:mach) : unit =
         | [src; dest] ->
             let s64 = eval_num_opnd src mach in
             let d64 = eval_num_opnd dest mach in
-            let r64 = sub d64 s64 in
+            let r64 = Int64_overflow.sub d64 s64 in
                 ignore (arith_set_flags (r64.value, r64.overflow) mach.flags)
         | _ -> failwith "cmp instruction expects 2 operands"
     )
