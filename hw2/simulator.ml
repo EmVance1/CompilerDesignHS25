@@ -197,22 +197,16 @@ let eval_addr_opnd (op:operand) (mach:mach) : quad =
     | Imm imm -> imm_valueof imm
     | Reg reg -> mach.regs.(rind reg)
     | Ind1 imm -> imm_valueof imm
-    | Ind2 reg -> mach.regs.(rind reg) (* in
-        begin match (map_addr reg) with
-          | Some ptr -> Int64.of_int ptr
-          | None -> failwith "reg did not contain a valid memory address"
-        end *)
-
-    | Ind3 (imm, reg) -> 
-          let basic_addr = mach.regs.(rind reg) in
-          let offset = imm_valueof imm in
-          Int64.add basic_addr offset
+    | Ind2 reg -> mach.regs.(rind reg)
+    | Ind3 (imm, reg) ->
+        let basic_addr = mach.regs.(rind reg) in
+        let offset = imm_valueof imm in
+        Int64.add basic_addr offset
 
     | _ -> failwith "operand was not an indirect address"
 
 
-(* use to convert arithmetic instruction operands to qwords *)
-let set_flags ((quad, fo):(quad * bool)) (flags:flags) : quad =
+let arith_set_flags ((quad, fo):(quad * bool)) (flags:flags) : quad =
     flags.fz <- quad = 0L;
     flags.fs <- quad < 0L;
     flags.fo <- fo;
@@ -262,6 +256,18 @@ let arith_sets_fo (ins:opcode) (s64:quad) (d64:quad) (r64:quad) (fo:bool) : bool
     | Xorq | Orq | Andq -> false
     | _ -> failwith "opcode is not an arithmetic/logic operation"
 
+(* determines the status of the 'FO' register after a shift operation *)
+let shift_sets_fo (ins:opcode) (a32:int) (d64:quad) (fo:bool) : bool =
+  if a32 <> 1 then fo else
+  match ins with
+    | Shlq -> false
+    | Sarq ->
+        let b1 = (Int64.logand (Int64.shift_right d64 62) 1L) in
+        let b2 = (Int64.logand (Int64.shift_right d64 63) 1L) in
+            b1 = b2
+    | Shrq -> d64 < 0L
+    | _ -> failwith "opcode is not an shift operation"
+
 (* the function to be applied to operands for binary operations *)
 let arith_func_binary (ins:opcode) : quad -> quad -> quad =
   match ins with
@@ -272,6 +278,14 @@ let arith_func_binary (ins:opcode) : quad -> quad -> quad =
     | Orq   -> Int64.logor
     | Andq  -> Int64.logand
     | _ -> failwith "opcode is not an arithmetic/logic operation"
+
+(* the function to be applied to operands for shift operations *)
+let arith_func_shift (ins:opcode) : quad -> int -> quad =
+  match ins with
+    | Shlq  -> Int64.shift_left
+    | Sarq  -> Int64.shift_right
+    | Shrq  -> Int64.shift_right_logical
+    | _ -> failwith "opcode is not an shift operation"
 
 (* the function to be applied to operands for unary operations *)
 let arith_func_unary (ins:opcode) : quad -> quad =
@@ -319,13 +333,13 @@ let eval_instr ((ins, ops):(opcode * operand list)) (mach:mach) : unit =
                 writeback dest addr mach
         | _ -> failwith "leaq instruction expects 1 src and 1 dest operand"
     )
-    | Incq | Decq | Negq  | Notq -> (
+    | Incq | Decq | Negq | Notq -> (
       match ops with
         | [dest] ->
             let d64 = eval_num_opnd dest mach in
             let r64 = (arith_func_unary ins) d64 in
             let fo  = arith_sets_fo ins 0L d64 r64 mach.flags.fo in
-                writeback dest (set_flags (r64, fo) mach.flags) mach
+                writeback dest (arith_set_flags (r64, fo) mach.flags) mach
         | _ -> failwith "unary math instruction expects 1 operand"
     )
     | Addq | Subq | Imulq | Xorq | Orq | Andq -> (
@@ -335,10 +349,19 @@ let eval_instr ((ins, ops):(opcode * operand list)) (mach:mach) : unit =
             let d64 = eval_num_opnd dest mach in
             let r64 = (arith_func_binary ins) s64 d64 in
             let fo  = arith_sets_fo ins s64 d64 r64 mach.flags.fo in
-                writeback dest (set_flags (r64, fo) mach.flags) mach
+                writeback dest (arith_set_flags (r64, fo) mach.flags) mach
         | _ -> failwith "binary math instruction expects 2 operands"
     )
-    | Shlq | Sarq | Shrq -> (failwith "unimplemented")
+    | Shlq | Sarq | Shrq -> (
+      match ops with
+        | [amt; dest] ->
+            let a32 = Int64.to_int (eval_num_opnd amt mach) in
+            let d64 = eval_num_opnd dest mach in
+            let sh = (arith_func_shift ins) d64 a32 in
+            let fo  = shift_sets_fo ins a32 d64 mach.flags.fo in
+                if a32 <> 0 then writeback dest (arith_set_flags (sh, fo) mach.flags) mach
+        | _ -> failwith "shift instruction expects 1 amd and 1 dest operand"
+    )
     | Jmp -> (
       match ops with
         | [src] ->
@@ -363,7 +386,7 @@ let eval_instr ((ins, ops):(opcode * operand list)) (mach:mach) : unit =
             let d64 = eval_num_opnd dest mach in
             let r64 = Int64.sub d64 s64 in
             let fo  = arith_sets_fo Subq s64 d64 r64 mach.flags.fo in
-                ignore (set_flags (r64, fo) mach.flags)
+                ignore (arith_set_flags (r64, fo) mach.flags)
         | _ -> failwith "cmp instruction expects 2 operands"
     )
     | Set cnd -> (
