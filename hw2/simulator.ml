@@ -168,38 +168,46 @@ let rec imm_valueof (imm:imm) : quad =
       | Lbl _ -> failwith "label is not a numerical value"
 
 
-(* use to convert value-type operands to qwords, unfinished *)
-let eval_num_opnd (op:operand) (mach:mach) : quad = failwith "unimplemented"
-  (*
+(* use to convert value-type operands to qwords *)
+let eval_num_opnd (op:operand) (mach:mach) : quad = 
   match op with
-    | Imm imm -> match imm with
-      | Lit l -> l
-      | Lbl _ -> failwith "label is not a numerical value"
-    end
-    | Reg reg -> regs.(rind reg)
-    | Ind1 imm ->
-    | Ind2 reg ->
-    | Ind3 (imm, reg) ->
-  *)
+    | Imm imm -> imm_valueof imm
+    | Reg reg -> mach.regs.(rind reg)
+    | Ind1 imm -> let addr = imm_valueof imm in
+        let ptr = (match (map_addr addr) with
+          | Some ptr -> ptr
+          | None -> raise X86lite_segfault) in
+            int64_of_sbytes (Array.to_list (Array.sub mach.mem ptr 8))
+    | Ind2 reg -> let reg = mach.regs.(rind reg) in
+        let ptr = (match (map_addr reg) with
+          | Some ptr -> ptr
+          | None -> raise X86lite_segfault) in
+            int64_of_sbytes (Array.to_list (Array.sub mach.mem ptr 8))
+    | Ind3 (imm, reg) -> let reg = mach.regs.(rind reg) in
+        let addr = Int64.add reg (imm_valueof imm) in
+        let ptr = (match (map_addr addr) with
+          | Some ptr -> ptr
+          | None -> raise X86lite_segfault) in
+            int64_of_sbytes (Array.to_list (Array.sub mach.mem ptr 8))
+    | _ -> failwith "operand was not a valid number"
 
 (* use to convert address-type operands to qwords, unfinished *)
 let eval_addr_opnd (op:operand) (mach:mach) : quad =
   match op with
+    | Imm imm -> imm_valueof imm
+    | Reg reg -> mach.regs.(rind reg)
     | Ind1 imm -> imm_valueof imm
-    | Ind2 reg -> (
-        let reg = mach.regs.(rind reg) in
+    | Ind2 reg -> mach.regs.(rind reg) (* in
         begin match (map_addr reg) with
           | Some ptr -> Int64.of_int ptr
           | None -> failwith "reg did not contain a valid memory address"
-        end
-    )
-    | Ind3 (imm, reg) -> (
-        let reg = mach.regs.(rind reg) in
-        begin match (map_addr reg) with
-          | Some ptr -> Int64.add (Int64.of_int ptr) (imm_valueof imm)
-          | None -> failwith "reg did not contain a valid memory address"
-        end
-    )
+        end *)
+
+    | Ind3 (imm, reg) -> 
+          let basic_addr = mach.regs.(rind reg) in
+          let offset = imm_valueof imm in
+          Int64.add basic_addr offset
+
     | _ -> failwith "operand was not an indirect address"
 
 
@@ -295,6 +303,14 @@ let eval_instr ((ins, ops):(opcode * operand list)) (mach:mach) : unit =
         | _ -> failwith "move instruction expects 1 src and 1 dest operand"
     )
     | Popq -> (
+      match ops with
+        | [dest] ->
+            let src = Ind2 Rsp in
+            let s64 = eval_num_opnd src mach in
+            let inc = Int64.add mach.regs.(rind Rsp) 8L in
+                mach.regs.(rind Rsp) <- inc;
+                writeback dest s64 mach
+        | _ -> failwith "move instruction expects 1 src and 1 dest operand"
     )
     | Leaq -> (
       match ops with
@@ -322,7 +338,7 @@ let eval_instr ((ins, ops):(opcode * operand list)) (mach:mach) : unit =
                 writeback dest (set_flags (r64, fo) mach.flags) mach
         | _ -> failwith "binary math instruction expects 2 operands"
     )
-    | Shlq | Sarq | Shrq -> failwith "unimplemented"
+    | Shlq | Sarq | Shrq -> (failwith "unimplemented")
     | Jmp -> (
       match ops with
         | [src] ->
@@ -340,9 +356,45 @@ let eval_instr ((ins, ops):(opcode * operand list)) (mach:mach) : unit =
                 if (op cnd) then mach.regs.(rip) <- addr
         | _ -> failwith "jmp instruction expects an address"
     )
-    | Cmpq -> failwith "unimplemented"
-    | Set cnd -> failwith "unimplemented"
-    | Callq | Retq -> failwith "unimplemented"
+    | Cmpq -> (
+      match ops with
+        | [src; dest] ->
+            let s64 = eval_num_opnd src mach in
+            let d64 = eval_num_opnd dest mach in
+            let r64 = Int64.sub d64 s64 in
+            let fo  = arith_sets_fo Subq s64 d64 r64 mach.flags.fo in
+                ignore (set_flags (r64, fo) mach.flags)
+        | _ -> failwith "cmp instruction expects 2 operands"
+    )
+    | Set cnd -> (
+      match ops with
+        | [dest] ->
+            let op  = interp_cnd mach.flags in
+            let v64 = if (op cnd) then 1L else 0L in
+                writeback dest v64 mach
+        | _ -> failwith "set instruction expects 1 operand"
+    )
+    | Callq -> (
+      match ops with
+        | [src] ->
+            let addr = eval_addr_opnd src mach in
+            let rip  = rind Rip in
+            let ret  = Int64.add mach.regs.(rip) ins_size in
+            let dest = Ind2 Rsp in
+            let dec  = Int64.sub mach.regs.(rind Rsp) 8L in
+                mach.regs.(rind Rsp) <- dec;
+                writeback dest ret mach;
+                mach.regs.(rip) <- addr
+        | _ -> failwith "callq instruction expects an address"
+    )
+    | Retq -> (
+        let src = Ind2 Rsp in
+        let ret = eval_num_opnd src mach in
+        let inc = Int64.add mach.regs.(rind Rsp) 8L in
+            mach.regs.(rind Rsp) <- inc;
+            mach.regs.(rind Rip) <- ret
+    )
+    | _ -> failwith "unknown instruction"
 
 (* Simulates one step of the machine:
     - fetch the instruction at %rip
@@ -355,7 +407,7 @@ let step { flags: flags; regs: regs; mem: mem } : unit =
   let rip_val = regs.(rind Rip) in
   let mem_loc = (match (map_addr rip_val) with
     | Some loc -> loc
-    | None -> failwith "rip did not contain a valid memory address") in
+    | None -> raise X86lite_segfault) in
   let ins = mem.(mem_loc) in
     begin match ins with
       | InsB0 ins -> regs.(rind Rip) <- Int64.add rip_val 8L;
