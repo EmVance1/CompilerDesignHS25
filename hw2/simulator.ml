@@ -241,6 +241,30 @@ let writeback (dest:operand) (value:quad) (mach:mach) : unit =
     )
 
 
+(*
+let sign_bit (quad:quad) : quad = Int64.logand (Int64.shift_right quad 63) 1L
+
+(* determines the status of the 'FO' register after an operation *)
+let arith_sets_fo (ins:opcode) (s64:quad) (d64:quad) (r64:quad) (fo:bool) : bool =
+  match ins with
+    | Addq  -> sign_bit d64 = sign_bit s64 && sign_bit r64 <> sign_bit s64
+    | Subq  -> (sign_bit d64 = sign_bit (Int64.neg s64) && sign_bit r64 <> sign_bit (Int64.neg s64)) || s64 = Int64.min_int
+    | Imulq -> 
+      let open Int64 in
+      let r_sign = logand (shift_right r64 63) 1L in
+      let d_sign = logand (shift_right d64 63) 1L in
+      let s_sign = logand (shift_right s64 63) 1L in
+      let expected_sign = logxor d_sign s_sign in
+      r_sign <> expected_sign
+    | Incq  -> sign_bit d64 = 0L && sign_bit r64 <> 0L
+    | Decq  -> sign_bit d64 = 1L && sign_bit r64 <> 1L
+    | Negq  -> d64 = Int64.min_int
+    | Notq  -> fo
+    | Xorq | Orq | Andq -> false
+    | _ -> failwith "opcode is not an arithmetic/logic operation"
+*)
+
+
 (* determines the status of the 'FO' register after a shift operation *)
 let shift_sets_fo (ins:opcode) (a32:int) (d64:quad) (fo:bool) : bool =
   if a32 <> 1 then fo else
@@ -268,7 +292,7 @@ let arith_func_unary (ins:opcode) (fo:bool) : quad -> t =
 let arith_func_binary (ins:opcode) : quad -> quad -> t =
   match ins with
     | Addq  -> add
-    | Subq  -> sub
+    | Subq  -> fun x y -> sub y x
     | Imulq -> mul
     | Xorq  -> fun a b -> { value = Int64.logxor a b; overflow = false }
     | Orq   -> fun a b -> { value = Int64.logor  a b; overflow = false }
