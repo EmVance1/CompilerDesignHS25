@@ -227,7 +227,7 @@ let writeback (dest:operand) (value:quad) (mach:mach) : unit =
         let reg = mach.regs.(rind reg) in
         let ptr = (match (map_addr reg) with
           | Some ptr -> ptr
-          | None -> failwith "reg did not contain a valid memory address") in
+          | None -> raise X86lite_segfault) in
 
           mem_write_i64 mach.mem ptr (sbytes_of_int64 value)
     )
@@ -235,7 +235,7 @@ let writeback (dest:operand) (value:quad) (mach:mach) : unit =
         let reg = mach.regs.(rind reg) in
         let ptr = (match (map_addr reg) with
           | Some ptr -> ptr + (Int64.to_int (imm_valueof imm))
-          | None -> failwith "reg did not contain a valid memory address") in
+          | None -> raise X86lite_segfault) in
 
           mem_write_i64 mach.mem ptr (sbytes_of_int64 value)
     )
