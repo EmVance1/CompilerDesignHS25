@@ -496,7 +496,7 @@ let collect_labels (p:prog) (off:quad) : symbols =
       begin match prog with
         | [] -> acc
         | h::tl -> (match h.asm with
-          (* label addr = prior elements + sum elemsize + offset *)
+                                               (* addr = sum prior + offset *)       (* sum prior = sum prior + datasize *)
           | Text t -> collect_impl tl ((h.lbl, Int64.add (Int64.of_int n) off)::acc) (n + (List.length t) * 8)
           | Data d -> collect_impl tl ((h.lbl, Int64.add (Int64.of_int n) off)::acc) (n + (List.fold_left (+) 0 (List.map data_length d)))
         )
@@ -526,6 +526,7 @@ let assemble (p:prog) : exec =
         { entry = symbols "main";
           text_pos = mem_bot;
           data_pos = data_offset;
+          (* map 'elem' list to 'sbyte list' list, fold-left-concatenate *)
           text_seg = List.fold_left (@) [] (List.map (asm_block symbols) text);
           data_seg = List.fold_left (@) [] (List.map (asm_block symbols) data);
         }
