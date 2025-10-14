@@ -498,5 +498,21 @@ failwith "assemble unimplemented"
   Hint: The Array.make, Array.blit, and Array.of_list library functions 
   may be of use.
 *)
-let load {entry; text_pos; data_pos; text_seg; data_seg} : mach = 
-failwith "load unimplemented"
+let load {entry; text_pos; data_pos; text_seg; data_seg} : mach =
+    let mem = Array.make 0x10000 (Byte '\x00') in
+    let text = Array.of_list text_seg in
+    let text_addr = (match map_addr text_pos with
+        | Some addr -> addr
+        | None -> raise X86lite_segfault) in
+    Array.blit text 0 mem text_addr (Array.length text);
+    let data = Array.of_list data_seg in
+    let data_addr = (match map_addr data_pos with
+        | Some addr -> addr
+        | None -> raise X86lite_segfault) in
+    Array.blit data 0 mem data_addr (Array.length data);
+    let regs = Array.make 17 0L in
+    regs.(rind Rip) <- entry;
+    regs.(rind Rsp) <- Int64.sub mem_top 8L;
+    mem_write_i64 mem (0x10000 - 8) (sbytes_of_int64 exit_addr);
+        { flags={ fs=false; fz=false; fo=false }; regs=regs; mem=mem }
+
