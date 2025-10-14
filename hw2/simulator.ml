@@ -482,22 +482,33 @@ exception Redefined_sym of lbl
 
   HINT: List.fold_left and List.fold_right are your friends.
  *)
-let resolve_label (p:prog) (l:lbl) : int =
-    let rec finder prog acc =
+let data_length (d:data) : int =
+    match d with
+      | Asciz s -> String.length s + 1
+      | Quad _  -> 8
+
+let collect_labels (p:prog) (off:int) : (lbl * int) list =
+    let rec collect_impl prog acc n =
       begin match prog with
-        | [] -> raise (Undefined_sym l)
-        | h::tl ->
-          if h.lbl = l then
-              acc
-          else begin match h.asm with
-            | Text t -> finder tl (acc + (List.length t) * 8)
-            | Data d -> finder tl (acc + (List.length d) * 8)
-          end
+        | [] -> acc
+        | h::tl -> (match h.asm with
+          | Text t -> collect_impl tl ((h.lbl, n + off)::acc) (n + (List.length t) * 8)
+          | Data d -> collect_impl tl ((h.lbl, n + off)::acc) (n + (List.fold_left (+) 0 (List.map data_length d)))
+        )
       end in
-        finder p 0
+        collect_impl p [] 0
 
 
-let assemble (p:prog) : exec = failwith "unimplemented"
+let assemble (p:prog) : exec =
+    let is_text a = match a.asm with
+      | Text _ -> true
+      | Data _ -> false
+    in
+
+    let text = (List.filter is_text p) in
+    let data = (List.filter (fun x -> not (is_text x)) p) in
+    let symbols = (collect_labels text 0) @ (collect_labels data (8 * List.length text)) in
+        failwith = "unfinished"
 
 (* Convert an object file into an executable machine state. 
     - allocate the mem array
