@@ -505,7 +505,8 @@ let rec lookup_label (lbl:lbl) (syms:symbols) : quad =
       | [] -> raise (Undefined_sym lbl)
       | (l, addr)::tl -> if l = lbl then addr else lookup_label lbl tl
 
-let asm_block (elem:elem list) (syms:symbols) : sbyte list = failwith "unimplemented"
+let asm_block (syms:symbols) (elem:elem) : sbyte list = failwith "unimplemented"
+
 
 let assemble (p:prog) : exec =
     let is_text a = match a.asm with
@@ -520,8 +521,8 @@ let assemble (p:prog) : exec =
         { entry = (lookup_label "main" symbols);
           text_pos = mem_bot;
           data_pos = data_offset;
-          text_seg = asm_block text symbols;
-          data_seg = asm_block data symbols;
+          text_seg = List.fold_left (@) [] (List.map (asm_block symbols) text);
+          data_seg = List.fold_left (@) [] (List.map (asm_block symbols) data);
         }
 
 (* Convert an object file into an executable machine state. 
