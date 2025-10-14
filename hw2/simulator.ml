@@ -231,14 +231,6 @@ let writeback (dest:operand) (value:quad) (mach:mach) : unit =
 
           mem_write_i64 mach.mem ptr (sbytes_of_int64 value)
     )
-    (* | Ind3 (imm, reg) -> (
-        let reg = mach.regs.(rind reg) in
-        let ptr = (match (map_addr reg) with
-          | Some ptr -> ptr + (Int64.to_int (imm_valueof imm))
-          | None -> raise X86lite_segfault) in
-
-          mem_write_i64 mach.mem ptr (sbytes_of_int64 value)
-    ) *)
     | Ind3 (imm, reg) -> (
         let basic_addr = mach.regs.(rind reg) in
         let offset = imm_valueof imm in
@@ -249,30 +241,6 @@ let writeback (dest:operand) (value:quad) (mach:mach) : unit =
 
         mem_write_i64 mach.mem ptr (sbytes_of_int64 value)
     )
-
-
-(*
-let sign_bit (quad:quad) : quad = Int64.logand (Int64.shift_right quad 63) 1L
-
-(* determines the status of the 'FO' register after an operation *)
-let arith_sets_fo (ins:opcode) (s64:quad) (d64:quad) (r64:quad) (fo:bool) : bool =
-  match ins with
-    | Addq  -> sign_bit d64 = sign_bit s64 && sign_bit r64 <> sign_bit s64
-    | Subq  -> (sign_bit d64 = sign_bit (Int64.neg s64) && sign_bit r64 <> sign_bit (Int64.neg s64)) || s64 = Int64.min_int
-    | Imulq -> 
-      let open Int64 in
-      let r_sign = logand (shift_right r64 63) 1L in
-      let d_sign = logand (shift_right d64 63) 1L in
-      let s_sign = logand (shift_right s64 63) 1L in
-      let expected_sign = logxor d_sign s_sign in
-      r_sign <> expected_sign
-    | Incq  -> sign_bit d64 = 0L && sign_bit r64 <> 0L
-    | Decq  -> sign_bit d64 = 1L && sign_bit r64 <> 1L
-    | Negq  -> d64 = Int64.min_int
-    | Notq  -> fo
-    | Xorq | Orq | Andq -> false
-    | _ -> failwith "opcode is not an arithmetic/logic operation"
-*)
 
 
 (* determines the status of the 'FO' register after a shift operation *)
@@ -508,7 +476,6 @@ let collect_labels (p:prog) (off:quad) : symbols =
       begin match prog with
         | [] -> acc
         | h::tl -> (match h.asm with
-                                      (* addr = sum prior + offset *)       (* sum prior = sum prior + datasize *)
           | Text t ->
             let current_block_size = Int64.mul 8L (Int64.of_int (List.length t)) in
             collect_impl tl ((h.lbl, Int64.add n off)::acc) (Int64.add n current_block_size)
@@ -563,10 +530,7 @@ let assemble (p:prog) : exec =
       | Data _ -> 0
     in
 
-    (* Calculate the total number of instructions by summing them up from all text blocks *)
     let total_ins_count = List.fold_left (fun acc e -> acc + (count_instructions e)) 0 text in
-
-    (* Correctly calculate the size of the text segment and the data offset *)
     let text_segment_size = Int64.of_int (total_ins_count * 8) in
     let data_offset = Int64.add mem_bot text_segment_size in
 
