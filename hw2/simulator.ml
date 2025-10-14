@@ -502,20 +502,21 @@ let data_length (d:data) : Int64.t =
 type symbols = (lbl * quad) list
 
 
+let rec contains_symbol (syms:symbols) (lbl:lbl) : bool =
+    match syms with
+      | [] -> false
+      | (l, _)::tl -> if l = lbl then true else contains_symbol tl lbl
 
 let collect_labels (p:prog) (off:quad) : symbols =
     let rec collect_impl prog acc (n:quad) =
       begin match prog with
         | [] -> acc
-        | h::tl -> (match h.asm with
-                                      (* addr = sum prior + offset *)       (* sum prior = sum prior + datasize *)
-          | Text t ->
-            let current_block_size = Int64.mul 8L (Int64.of_int (List.length t)) in
-            collect_impl tl ((h.lbl, Int64.add n off)::acc) (Int64.add n current_block_size)
-          | Data d ->
-            let current_block_size = (List.fold_left Int64.add 0L (List.map data_length d)) in
-            collect_impl tl ((h.lbl, Int64.add n off)::acc) (Int64.add n current_block_size)
-        )
+        | h::tl -> if contains_symbol acc h.lbl then raise (Redefined_sym h.lbl) else
+          let block_size = begin match h.asm with
+            | Text t -> Int64.mul 8L (Int64.of_int (List.length t))
+            | Data d -> List.fold_left Int64.add 0L (List.map data_length d)
+          end in
+            collect_impl tl ((h.lbl, Int64.add n off)::acc) (Int64.add n block_size)
       end in
         collect_impl p [] 0L
 
@@ -523,6 +524,7 @@ let rec lookup_symbols (syms:symbols) (lbl:lbl) : quad =
     match syms with
       | [] -> raise (Undefined_sym lbl)
       | (l, addr)::tl -> if l = lbl then addr else lookup_symbols tl lbl
+
 
 let patch_operand (syms:(lbl -> quad)) (op:operand) : operand =
     match op with
