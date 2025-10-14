@@ -231,13 +231,23 @@ let writeback (dest:operand) (value:quad) (mach:mach) : unit =
 
           mem_write_i64 mach.mem ptr (sbytes_of_int64 value)
     )
-    | Ind3 (imm, reg) -> (
+    (* | Ind3 (imm, reg) -> (
         let reg = mach.regs.(rind reg) in
         let ptr = (match (map_addr reg) with
           | Some ptr -> ptr + (Int64.to_int (imm_valueof imm))
           | None -> raise X86lite_segfault) in
 
           mem_write_i64 mach.mem ptr (sbytes_of_int64 value)
+    ) *)
+    | Ind3 (imm, reg) -> (
+        let basic_addr = mach.regs.(rind reg) in
+        let offset = imm_valueof imm in
+        let final_addr = Int64.add basic_addr offset in
+        let ptr = (match (map_addr final_addr) with
+          | Some ptr -> ptr
+          | None -> raise X86lite_segfault) in
+
+        mem_write_i64 mach.mem ptr (sbytes_of_int64 value)
     )
 
 
@@ -269,11 +279,10 @@ let arith_sets_fo (ins:opcode) (s64:quad) (d64:quad) (r64:quad) (fo:bool) : bool
 let shift_sets_fo (ins:opcode) (a32:int) (d64:quad) (fo:bool) : bool =
   if a32 <> 1 then fo else
   match ins with
-    | Shlq -> false
-    | Sarq ->
-        let b1 = (Int64.logand (Int64.shift_right d64 62) 1L) in
-        let b2 = (Int64.logand (Int64.shift_right d64 63) 1L) in
-            b1 = b2
+    | Shlq -> 
+        let r64 = Int64.shift_left d64 1 in
+        (d64 < 0L) <> (r64 < 0L)
+    | Sarq -> false
     | Shrq -> d64 < 0L
     | _ -> failwith "opcode is not an shift operation"
 
@@ -284,7 +293,7 @@ let arith_func_unary (ins:opcode) (fo:bool) : quad -> Int64_overflow.t =
     | Incq  -> Int64_overflow.succ
     | Decq  -> Int64_overflow.pred
     | Negq  -> Int64_overflow.neg
-    | Notq  -> fun v -> { value = if v = 0L then 1L else 0L; overflow = fo }
+    | Notq  -> fun v -> { value = Int64.lognot v; overflow = false }
     | _ -> failwith "opcode is not an arithmetic/logic operation"
 
 (* the function to be applied to operands for binary operations *)
@@ -307,7 +316,7 @@ let arith_func_shift (ins:opcode) : quad -> int -> quad =
     | _ -> failwith "opcode is not an shift operation"
 
 
-let eval_instr ((ins, ops):(opcode * operand list)) (mach:mach) : unit =
+let eval_instr ((ins, ops):(opcode * operand list)) (mach:mach) (rip_val:quad) : unit =
   match ins with
     | Movq -> (
       match ops with
@@ -409,12 +418,13 @@ let eval_instr ((ins, ops):(opcode * operand list)) (mach:mach) : unit =
         | [src] ->
             let addr = eval_addr_opnd src mach in
             let rip  = rind Rip in
-            let ret  = Int64.add mach.regs.(rip) ins_size in
+            let ret  = Int64.add rip_val ins_size in
             let dest = Ind2 Rsp in
             let dec  = Int64.sub mach.regs.(rind Rsp) 8L in
                 mach.regs.(rind Rsp) <- dec;
                 writeback dest ret mach;
                 mach.regs.(rip) <- addr
+
         | _ -> failwith "callq instruction expects an address"
     )
     | Retq -> (
@@ -441,7 +451,7 @@ let step { flags: flags; regs: regs; mem: mem } : unit =
   let ins = mem.(mem_loc) in
     begin match ins with
       | InsB0 ins -> regs.(rind Rip) <- Int64.add rip_val 8L;
-            eval_instr ins { flags=flags; regs=regs; mem=mem }
+            eval_instr ins { flags=flags; regs=regs; mem=mem } rip_val
       | _ -> failwith "rip did not point to valid instruction"
     end
 
@@ -498,9 +508,13 @@ let collect_labels (p:prog) (off:quad) : symbols =
       begin match prog with
         | [] -> acc
         | h::tl -> (match h.asm with
-                                               (* addr = sum prior + offset *)       (* sum prior = sum prior + datasize *)
-          | Text t -> collect_impl tl ((h.lbl, Int64.add n off)::acc) (Int64.mul 8L (Int64.of_int (List.length t)))
-          | Data d -> collect_impl tl ((h.lbl, Int64.add n off)::acc) (Int64.add n (List.fold_left Int64.add 0L (List.map data_length d)))
+                                      (* addr = sum prior + offset *)       (* sum prior = sum prior + datasize *)
+          | Text t ->
+            let current_block_size = Int64.mul 8L (Int64.of_int (List.length t)) in
+            collect_impl tl ((h.lbl, Int64.add n off)::acc) (Int64.add n current_block_size)
+          | Data d ->
+            let current_block_size = (List.fold_left Int64.add 0L (List.map data_length d)) in
+            collect_impl tl ((h.lbl, Int64.add n off)::acc) (Int64.add n current_block_size)
         )
       end in
         collect_impl p [] 0L
@@ -510,8 +524,28 @@ let rec lookup_symbols (syms:symbols) (lbl:lbl) : quad =
       | [] -> raise (Undefined_sym lbl)
       | (l, addr)::tl -> if l = lbl then addr else lookup_symbols tl lbl
 
+let patch_operand (syms:(lbl -> quad)) (op:operand) : operand =
+    match op with
+      | Imm (Lbl l) -> Imm (Lit (syms l))
+      | Ind1 (Lbl l) -> Ind1 (Lit (syms l))
+      | Ind3 (Lbl l, r) -> Ind3 (Lit (syms l), r)
+      | _ -> op
+
+let patch_ins (syms:(lbl -> quad)) ((op, ops):ins) : ins =
+    (op, List.map (patch_operand syms) ops)
+
 (* expand single basic block to sbyte list, symbol lookup provided *)
-let asm_block (syms:(lbl -> quad)) (elem:elem) : sbyte list = failwith "unimplemented"
+let asm_block (syms:(lbl -> quad)) (elem:elem) : sbyte list = 
+    match elem.asm with
+      | Text ins_list -> 
+        let sbytes_list = List.map (fun ins -> sbytes_of_ins (patch_ins syms ins)) ins_list in
+        List.flatten sbytes_list
+      | Data data_list -> 
+        let sbytes_list = List.map (function
+            | Quad (Lbl l) -> sbytes_of_data (Quad (Lit (syms l)))
+            | d -> sbytes_of_data d
+        ) data_list in
+        List.flatten sbytes_list
 
 
 (* splits and orders text and data according to layout, computes starts, collects symbols, constructs exec record *)
@@ -523,7 +557,19 @@ let assemble (p:prog) : exec =
 
     let text = (List.filter is_text p) in
     let data = (List.filter (fun x -> not (is_text x)) p) in
-    let data_offset = Int64.add mem_bot (Int64.of_int (8 * List.length text)) in
+    let count_instructions (e: elem) : int =
+      match e.asm with
+      | Text ins_list -> List.length ins_list
+      | Data _ -> 0
+    in
+
+    (* Calculate the total number of instructions by summing them up from all text blocks *)
+    let total_ins_count = List.fold_left (fun acc e -> acc + (count_instructions e)) 0 text in
+
+    (* Correctly calculate the size of the text segment and the data offset *)
+    let text_segment_size = Int64.of_int (total_ins_count * 8) in
+    let data_offset = Int64.add mem_bot text_segment_size in
+
     let symbols = lookup_symbols ((collect_labels text mem_bot) @ (collect_labels data data_offset)) in
         { entry = symbols "main";
           text_pos = mem_bot;
