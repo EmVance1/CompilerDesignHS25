@@ -482,8 +482,23 @@ exception Redefined_sym of lbl
 
   HINT: List.fold_left and List.fold_right are your friends.
  *)
-let assemble (p:prog) : exec =
-failwith "assemble unimplemented"
+let find_label (p:prog) (l:lbl) : int =
+    let rec finder prog acc =
+      begin match prog with
+        | [] -> failwith "label not found"
+        | h::tl -> (
+          if h.lbl = l then
+              acc
+          else begin match h.asm with
+            | Text t -> finder tl (acc + (List.length t) * 8)
+            | Data d -> finder tl (acc + (List.length d) * 8)
+          end
+        )
+      end in
+        finder p 0
+
+
+let assemble (p:prog) : exec = failwith "unimplemented"
 
 (* Convert an object file into an executable machine state. 
     - allocate the mem array
