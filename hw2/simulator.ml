@@ -487,17 +487,25 @@ let data_length (d:data) : int =
       | Asciz s -> String.length s + 1
       | Quad _  -> 8
 
-let collect_labels (p:prog) (off:int) : (lbl * int) list =
+type symbols = (lbl * quad) list
+
+let collect_labels (p:prog) (off:quad) : symbols =
     let rec collect_impl prog acc n =
       begin match prog with
         | [] -> acc
         | h::tl -> (match h.asm with
-          | Text t -> collect_impl tl ((h.lbl, n + off)::acc) (n + (List.length t) * 8)
-          | Data d -> collect_impl tl ((h.lbl, n + off)::acc) (n + (List.fold_left (+) 0 (List.map data_length d)))
+          | Text t -> collect_impl tl ((h.lbl, Int64.add (Int64.of_int n) off)::acc) (n + (List.length t) * 8)
+          | Data d -> collect_impl tl ((h.lbl, Int64.add (Int64.of_int n) off)::acc) (n + (List.fold_left (+) 0 (List.map data_length d)))
         )
       end in
         collect_impl p [] 0
 
+let rec lookup_label (lbl:lbl) (syms:symbols) : quad =
+    match syms with
+      | [] -> raise (Undefined_sym lbl)
+      | (l, addr)::tl -> if l = lbl then addr else lookup_label lbl tl
+
+let asm_block (elem:elem list) (syms:symbols) : sbyte list = failwith "unimplemented"
 
 let assemble (p:prog) : exec =
     let is_text a = match a.asm with
@@ -507,8 +515,14 @@ let assemble (p:prog) : exec =
 
     let text = (List.filter is_text p) in
     let data = (List.filter (fun x -> not (is_text x)) p) in
-    let symbols = (collect_labels text 0) @ (collect_labels data (8 * List.length text)) in
-        failwith = "unfinished"
+    let data_offset = Int64.add mem_bot (Int64.of_int (8 * List.length text)) in
+    let symbols = (collect_labels text mem_bot) @ (collect_labels data data_offset) in
+        { entry = (lookup_label "main" symbols);
+          text_pos = mem_bot;
+          data_pos = data_offset;
+          text_seg = asm_block text symbols;
+          data_seg = asm_block data symbols;
+        }
 
 (* Convert an object file into an executable machine state. 
     - allocate the mem array
