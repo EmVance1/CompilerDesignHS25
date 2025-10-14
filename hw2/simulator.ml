@@ -482,6 +482,8 @@ exception Redefined_sym of lbl
 
   HINT: List.fold_left and List.fold_right are your friends.
  *)
+
+(* include null byte for strings *)
 let data_length (d:data) : int =
     match d with
       | Asciz s -> String.length s + 1
@@ -494,20 +496,23 @@ let collect_labels (p:prog) (off:quad) : symbols =
       begin match prog with
         | [] -> acc
         | h::tl -> (match h.asm with
+          (* label addr = prior elements + sum elemsize + offset *)
           | Text t -> collect_impl tl ((h.lbl, Int64.add (Int64.of_int n) off)::acc) (n + (List.length t) * 8)
           | Data d -> collect_impl tl ((h.lbl, Int64.add (Int64.of_int n) off)::acc) (n + (List.fold_left (+) 0 (List.map data_length d)))
         )
       end in
         collect_impl p [] 0
 
-let rec lookup_label (lbl:lbl) (syms:symbols) : quad =
+let rec lookup_symbols (syms:symbols) (lbl:lbl) : quad =
     match syms with
       | [] -> raise (Undefined_sym lbl)
-      | (l, addr)::tl -> if l = lbl then addr else lookup_label lbl tl
+      | (l, addr)::tl -> if l = lbl then addr else lookup_symbols tl lbl
 
-let asm_block (syms:symbols) (elem:elem) : sbyte list = failwith "unimplemented"
+(* expand single basic block to sbyte list, symbol lookup provided *)
+let asm_block (syms:(lbl -> quad)) (elem:elem) : sbyte list = failwith "unimplemented"
 
 
+(* splits and orders text and data according to layout, computes starts, collects symbols, constructs exec record *)
 let assemble (p:prog) : exec =
     let is_text a = match a.asm with
       | Text _ -> true
@@ -517,8 +522,8 @@ let assemble (p:prog) : exec =
     let text = (List.filter is_text p) in
     let data = (List.filter (fun x -> not (is_text x)) p) in
     let data_offset = Int64.add mem_bot (Int64.of_int (8 * List.length text)) in
-    let symbols = (collect_labels text mem_bot) @ (collect_labels data data_offset) in
-        { entry = (lookup_label "main" symbols);
+    let symbols = lookup_symbols ((collect_labels text mem_bot) @ (collect_labels data data_offset)) in
+        { entry = symbols "main";
           text_pos = mem_bot;
           data_pos = data_offset;
           text_seg = List.fold_left (@) [] (List.map (asm_block symbols) text);
