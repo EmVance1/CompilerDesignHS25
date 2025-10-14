@@ -482,18 +482,17 @@ exception Redefined_sym of lbl
 
   HINT: List.fold_left and List.fold_right are your friends.
  *)
-let find_label (p:prog) (l:lbl) : int =
+let resolve_label (p:prog) (l:lbl) : int =
     let rec finder prog acc =
       begin match prog with
-        | [] -> failwith "label not found"
-        | h::tl -> (
+        | [] -> raise (Undefined_sym l)
+        | h::tl ->
           if h.lbl = l then
               acc
           else begin match h.asm with
             | Text t -> finder tl (acc + (List.length t) * 8)
             | Data d -> finder tl (acc + (List.length d) * 8)
           end
-        )
       end in
         finder p 0
 
