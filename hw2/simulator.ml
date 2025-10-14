@@ -484,24 +484,26 @@ exception Redefined_sym of lbl
  *)
 
 (* include null byte for strings *)
-let data_length (d:data) : int =
+let data_length (d:data) : Int64.t =
     match d with
-      | Asciz s -> String.length s + 1
-      | Quad _  -> 8
+      | Asciz s -> Int64.of_int (String.length s + 1)
+      | Quad _  -> 8L
 
 type symbols = (lbl * quad) list
 
+
+
 let collect_labels (p:prog) (off:quad) : symbols =
-    let rec collect_impl prog acc n =
+    let rec collect_impl prog acc (n:quad) =
       begin match prog with
         | [] -> acc
         | h::tl -> (match h.asm with
                                                (* addr = sum prior + offset *)       (* sum prior = sum prior + datasize *)
-          | Text t -> collect_impl tl ((h.lbl, Int64.add (Int64.of_int n) off)::acc) (n + (List.length t) * 8)
-          | Data d -> collect_impl tl ((h.lbl, Int64.add (Int64.of_int n) off)::acc) (n + (List.fold_left (+) 0 (List.map data_length d)))
+          | Text t -> collect_impl tl ((h.lbl, Int64.add n off)::acc) (Int64.mul 8L (Int64.of_int (List.length t)))
+          | Data d -> collect_impl tl ((h.lbl, Int64.add n off)::acc) (Int64.add n (List.fold_left Int64.add 0L (List.map data_length d)))
         )
       end in
-        collect_impl p [] 0
+        collect_impl p [] 0L
 
 let rec lookup_symbols (syms:symbols) (lbl:lbl) : quad =
     match syms with
