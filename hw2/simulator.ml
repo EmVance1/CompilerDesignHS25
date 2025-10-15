@@ -359,7 +359,7 @@ let eval_instr ((ins, ops):(opcode * operand list)) (mach:mach) (rip_val:quad) :
     | Jmp -> (
       match ops with
         | [src] ->
-            let addr = eval_addr_opnd src mach in
+            let addr = eval_num_opnd src mach in
             let rip  = rind Rip in
                 mach.regs.(rip) <- addr
         | _ -> failwith "jmp instruction expects an address"
@@ -367,7 +367,7 @@ let eval_instr ((ins, ops):(opcode * operand list)) (mach:mach) (rip_val:quad) :
     | J cnd -> (
       match ops with
         | [src] ->
-            let addr = eval_addr_opnd src mach in
+            let addr = eval_num_opnd src mach in
             let rip  = rind Rip in
             let op   = interp_cnd mach.flags in
                 if (op cnd) then mach.regs.(rip) <- addr
@@ -393,7 +393,7 @@ let eval_instr ((ins, ops):(opcode * operand list)) (mach:mach) (rip_val:quad) :
     | Callq -> (
       match ops with
         | [src] ->
-            let addr = eval_addr_opnd src mach in
+            let addr = eval_num_opnd src mach in
             let rip  = rind Rip in
             let ret  = Int64.add rip_val ins_size in
             let dest = Ind2 Rsp in
