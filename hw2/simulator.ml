@@ -150,10 +150,8 @@ let interp_cnd {fo; fs; fz} : cnd -> bool = function
   | Ge  -> fs = fo
   | Lt  -> fs <> fo
   | Le  -> fz || (fs <> fo)
-  (* fun x -> failwith "interp_cnd unimplemented" *)
 
-(* Maps an X86lite address into Some OCaml array index,
-   or None if the address is not within the legal address space. *)
+(* Maps an X86lite address into Some OCaml array index, or None if the address is not within the legal address space. *)
 let map_addr (addr:quad) : int option =
   if addr < mem_bot || addr >= mem_top then
     None
@@ -167,43 +165,77 @@ let rec imm_valueof (imm:imm) : quad =
       | Lit l -> l
       | Lbl _ -> failwith "label is not a numerical value"
 
+(*
 
-(* use to convert value-type operands to qwords *)
-let eval_num_opnd (op:operand) (mach:mach) : quad = 
-  match op with
-    | Imm imm -> imm_valueof imm
-    | Reg reg -> mach.regs.(rind reg)
-    | Ind1 imm -> let addr = imm_valueof imm in
-        let ptr = (match (map_addr addr) with
-          | Some ptr -> ptr
-          | None -> raise X86lite_segfault) in
-            int64_of_sbytes (Array.to_list (Array.sub mach.mem ptr 8))
-    | Ind2 reg -> let reg = mach.regs.(rind reg) in
-        let ptr = (match (map_addr reg) with
-          | Some ptr -> ptr
-          | None -> raise X86lite_segfault) in
-            int64_of_sbytes (Array.to_list (Array.sub mach.mem ptr 8))
-    | Ind3 (imm, reg) -> let reg = mach.regs.(rind reg) in
-        let addr = Int64.add reg (imm_valueof imm) in
-        let ptr = (match (map_addr addr) with
-          | Some ptr -> ptr
-          | None -> raise X86lite_segfault) in
-            int64_of_sbytes (Array.to_list (Array.sub mach.mem ptr 8))
-    | _ -> failwith "operand was not a valid number"
+movq  $24, 0x400020
+movq  $24, %rax
+jmp   8(rax)
 
-(* use to convert address-type operands to qwords, unfinished *)
+expect rip = 0x400018 ?????????
+
+no....
+
+should be 0x400020
+
+*)
+
+(* use to convert address-type operands to qwords *)
 let eval_addr_opnd (op:operand) (mach:mach) : quad =
   match op with
-    | Imm imm -> imm_valueof imm
-    | Reg reg -> mach.regs.(rind reg)
+    | Imm  imm -> imm_valueof imm
+    | Reg  reg -> mach.regs.(rind reg)
     | Ind1 imm -> imm_valueof imm
     | Ind2 reg -> mach.regs.(rind reg)
-    | Ind3 (imm, reg) ->
+    | Ind3 (imm, reg) -> (
         let basic_addr = mach.regs.(rind reg) in
         let offset = imm_valueof imm in
-        Int64.add basic_addr offset
+          Int64.add basic_addr offset
+    )
 
-    | _ -> failwith "operand was not an indirect address"
+(* use to convert value-type operands to qwords *)
+let eval_num_opnd (op:operand) (mach:mach) : quad =
+  match op with
+    | Imm imm -> imm_valueof imm
+    | Reg reg -> mach.regs.(rind reg)
+    | Ind1 _ | Ind2 _ | Ind3 _ -> (
+        let ptr = eval_addr_opnd op mach in
+        let idx = (match map_addr ptr with
+          | Some idx -> idx
+          | None -> raise X86lite_segfault) in
+            int64_of_sbytes (Array.to_list (Array.sub mach.mem idx 8))
+    )
+
+(* writes a computed result to its destination *)
+let writeback (dest:operand) (value:quad) (mach:mach) : unit =
+  match dest with
+    | Imm _ -> failwith "cannot write to an immediate value"
+    | Reg reg -> mach.regs.(rind reg) <- value
+    | Ind1 _ | Ind2 _ | Ind3 _ -> (
+        let ptr = eval_addr_opnd dest mach in
+        let idx = (match map_addr ptr with
+          | Some idx -> idx
+          | None -> raise X86lite_segfault) in
+        let bytes = Array.of_list (sbytes_of_int64 value) in
+          Array.blit bytes 0 mach.mem idx 8
+    )
+
+let writeback_byte (dest:operand) (value:int) (mach:mach) : unit =
+  let open Char in
+  match dest with
+    | Imm _ -> failwith "cannot write to an immediate value"
+    | Reg reg -> (
+        let mask = Int64.lognot 0xFFL in
+        let hi   = Int64.logand mach.regs.(rind reg) mask in
+        let comp = Int64.logor hi (Int64.of_int value) in
+            mach.regs.(rind reg) <- comp
+    )
+    | Ind1 _ | Ind2 _ | Ind3 _ -> (
+        let ptr = eval_addr_opnd dest mach in
+        let idx = (match map_addr ptr with
+          | Some idx -> idx
+          | None -> raise X86lite_segfault) in
+            mach.mem.(idx) <- Byte (chr value)
+    )
 
 
 let arith_set_flags ((quad, fo):(quad * bool)) (flags:flags) : quad =
@@ -212,56 +244,25 @@ let arith_set_flags ((quad, fo):(quad * bool)) (flags:flags) : quad =
     flags.fo <- fo;
     quad;;
 
-let rec mem_write_i64 (mem:mem) (idx:int) (value:sbyte list) : unit =
-    match value with
-      | [] -> ()
-      | h::tl -> mem.(idx) <- h; mem_write_i64 mem (idx+1) tl
-
-(* writes a computed result to its destination *)
-let writeback (dest:operand) (value:quad) (mach:mach) : unit =
-  match dest with
-    | Imm _ -> failwith "cannot write to an immediate value"
-    | Reg reg -> mach.regs.(rind reg) <- value
-    | Ind1 imm -> failwith "unimplemented"
-    | Ind2 reg -> (
-        let reg = mach.regs.(rind reg) in
-        let ptr = (match (map_addr reg) with
-          | Some ptr -> ptr
-          | None -> raise X86lite_segfault) in
-
-          mem_write_i64 mach.mem ptr (sbytes_of_int64 value)
-    )
-    | Ind3 (imm, reg) -> (
-        let basic_addr = mach.regs.(rind reg) in
-        let offset = imm_valueof imm in
-        let final_addr = Int64.add basic_addr offset in
-        let ptr = (match (map_addr final_addr) with
-          | Some ptr -> ptr
-          | None -> raise X86lite_segfault) in
-
-        mem_write_i64 mach.mem ptr (sbytes_of_int64 value)
-    )
-
 
 (* determines the status of the 'FO' register after a shift operation *)
 let shift_sets_fo (ins:opcode) (a32:int) (d64:quad) (fo:bool) : bool =
   if a32 <> 1 then fo else
   match ins with
-    | Shlq -> 
+    | Shlq ->
         let r64 = Int64.shift_left d64 1 in
-        (d64 < 0L) <> (r64 < 0L)
+          (d64 < 0L) <> (r64 < 0L)
     | Sarq -> false
     | Shrq -> d64 < 0L
     | _ -> failwith "opcode is not an shift operation"
 
 
 (* the function to be applied to operands for unary operations *)
-let arith_func_unary (ins:opcode) (fo:bool) : quad -> Int64_overflow.t =
+let arith_func_unary (ins:opcode) : quad -> Int64_overflow.t =
   match ins with
     | Incq  -> Int64_overflow.succ
     | Decq  -> Int64_overflow.pred
     | Negq  -> Int64_overflow.neg
-    | Notq  -> fun v -> { value = Int64.lognot v; overflow = false }
     | _ -> failwith "opcode is not an arithmetic/logic operation"
 
 (* the function to be applied to operands for binary operations *)
@@ -320,12 +321,20 @@ let eval_instr ((ins, ops):(opcode * operand list)) (mach:mach) (rip_val:quad) :
                 writeback dest addr mach
         | _ -> failwith "leaq instruction expects 1 src and 1 dest operand"
     )
-    | Incq | Decq | Negq | Notq -> (
+    | Incq | Decq | Negq -> (
       match ops with
         | [dest] ->
             let d64 = eval_num_opnd dest mach in
-            let r64 = (arith_func_unary ins mach.flags.fo) d64 in
+            let r64 = (arith_func_unary ins) d64 in
                 writeback dest (arith_set_flags (r64.value, r64.overflow) mach.flags) mach
+        | _ -> failwith "unary math instruction expects 1 operand"
+    )
+    | Notq -> (
+      match ops with
+        | [dest] ->
+            let d64 = eval_num_opnd dest mach in
+            let r64 = Int64.lognot d64 in
+                writeback dest r64 mach
         | _ -> failwith "unary math instruction expects 1 operand"
     )
     | Addq | Subq | Imulq | Xorq | Orq | Andq -> (
@@ -377,8 +386,8 @@ let eval_instr ((ins, ops):(opcode * operand list)) (mach:mach) (rip_val:quad) :
       match ops with
         | [dest] ->
             let op  = interp_cnd mach.flags in
-            let v64 = if (op cnd) then 1L else 0L in
-                writeback dest v64 mach
+            let bit = if (op cnd) then 1 else 0 in
+                writeback_byte dest bit mach
         | _ -> failwith "set instruction expects 1 operand"
     )
     | Callq -> (
@@ -402,7 +411,6 @@ let eval_instr ((ins, ops):(opcode * operand list)) (mach:mach) (rip_val:quad) :
             mach.regs.(rind Rsp) <- inc;
             mach.regs.(rind Rip) <- ret
     )
-    | _ -> failwith "unknown instruction"
 
 (* Simulates one step of the machine:
     - fetch the instruction at %rip
@@ -419,7 +427,7 @@ let step { flags: flags; regs: regs; mem: mem } : unit =
   let ins = mem.(mem_loc) in
     begin match ins with
       | InsB0 ins -> regs.(rind Rip) <- Int64.add rip_val 8L;
-            eval_instr ins { flags=flags; regs=regs; mem=mem } rip_val
+          eval_instr ins { flags=flags; regs=regs; mem=mem } rip_val
       | _ -> failwith "rip did not point to valid instruction"
     end
 
@@ -462,7 +470,7 @@ exception Redefined_sym of lbl
  *)
 
 (* include null byte for strings *)
-let data_length (d:data) : Int64.t =
+let data_length (d:data) : quad =
     match d with
       | Asciz s -> Int64.of_int (String.length s + 1)
       | Quad _  -> 8L
@@ -470,23 +478,21 @@ let data_length (d:data) : Int64.t =
 type symbols = (lbl * quad) list
 
 
-let rec contains_symbol (syms:symbols) (lbl:lbl) : bool =
-    match syms with
-      | [] -> false
-      | (l, _)::tl -> if l = lbl then true else contains_symbol tl lbl
-
-let collect_labels (p:prog) (off:quad) : symbols =
+let collect_labels (pre:symbols) (p:prog) (off:quad) : symbols =
     let rec collect_impl prog acc (n:quad) =
       begin match prog with
         | [] -> acc
-        | h::tl -> if contains_symbol acc h.lbl then raise (Redefined_sym h.lbl) else
+        | h::tl -> (
+          let find = List.find_opt (fun (l, _) -> l = h.lbl) acc in
+            if Option.is_some find then raise (Redefined_sym h.lbl);
           let block_size = begin match h.asm with
             | Text t -> Int64.mul 8L (Int64.of_int (List.length t))
             | Data d -> List.fold_left Int64.add 0L (List.map data_length d)
           end in
             collect_impl tl ((h.lbl, Int64.add n off)::acc) (Int64.add n block_size)
+        )
       end in
-        collect_impl p [] 0L
+        collect_impl p pre 0L
 
 let rec lookup_symbols (syms:symbols) (lbl:lbl) : quad =
     match syms with
@@ -533,18 +539,23 @@ let assemble (p:prog) : exec =
       | Data _ -> 0
     in
 
-    let total_ins_count = List.fold_left (fun acc e -> acc + (count_instructions e)) 0 text in
-    let text_segment_size = Int64.of_int (total_ins_count * 8) in
-    let data_offset = Int64.add mem_bot text_segment_size in
+    let data_offset =
+      let text_count = List.fold_left (fun acc e -> acc + (count_instructions e)) 0 text in
+      let text_size  = Int64.of_int (text_count * 8) in
+        Int64.add mem_bot text_size in
 
-    let symbols = lookup_symbols ((collect_labels text mem_bot) @ (collect_labels data data_offset)) in
-        { entry = symbols "main";
-          text_pos = mem_bot;
-          data_pos = data_offset;
-          (* map 'elem' list to 'sbyte list' list, fold-left-concatenate *)
-          text_seg = List.fold_left (@) [] (List.map (asm_block symbols) text);
-          data_seg = List.fold_left (@) [] (List.map (asm_block symbols) data);
-        }
+    let symbols =
+      let text_syms = collect_labels []        text mem_bot in
+      let data_syms = collect_labels text_syms data data_offset in
+        lookup_symbols (text_syms @ data_syms) in
+
+    { entry = symbols "main";
+      text_pos = mem_bot;
+      data_pos = data_offset;
+      (* map 'elem' list to 'sbyte list' list, fold-left-concatenate *)
+      text_seg = List.fold_left (@) [] (List.map (asm_block symbols) text);
+      data_seg = List.fold_left (@) [] (List.map (asm_block symbols) data);
+    }
 
 (* Convert an object file into an executable machine state. 
     - allocate the mem array
@@ -574,6 +585,7 @@ let load {entry; text_pos; data_pos; text_seg; data_seg} : mach =
     let regs = Array.make nregs 0L in
     regs.(rind Rip) <- entry;
     regs.(rind Rsp) <- Int64.sub mem_top 8L;
-    mem_write_i64 mem (0x10000 - 8) (sbytes_of_int64 exit_addr);
+    let exit_bytes = Array.of_list (sbytes_of_int64 exit_addr) in
+    Array.blit exit_bytes 0 mem (0x10000 - 8) 8;
         { flags={ fs=false; fz=false; fo=false }; regs=regs; mem=mem }
 
