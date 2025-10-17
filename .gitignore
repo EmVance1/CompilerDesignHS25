@@ -8,4 +8,5 @@ hw1
 *.byte
 */dune
 */dune-project
+*.zip
 main.native
