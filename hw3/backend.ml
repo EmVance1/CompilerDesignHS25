@@ -266,8 +266,8 @@ let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list =
 let compile_block (fn:string) (ctxt:ctxt) (blk:Ll.block) : ins list =
     let insns = List.map (compile_insn ctxt) blk.insns |> List.concat in
     let term =
-      let lbl, term = blk.term in
-        compile_terminator lbl ctxt term in
+      let _, term = blk.term in
+        compile_terminator fn ctxt term in
       insns @ term
 
 let compile_lbl_block fn ctxt (lbl, blk) : elem =
