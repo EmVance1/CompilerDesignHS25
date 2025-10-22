@@ -88,8 +88,16 @@ let lookup m x = List.assoc x m
    the X86 instruction that moves an LLVM operand into a designated
    destination (usually a register).
 *)
-let compile_operand (ctxt:ctxt) (dest:X86.operand) : Ll.operand -> ins =
-  function _ -> failwith "compile_operand unimplemented"
+let compile_operand (ctxt:ctxt) (dest:X86.operand) : Ll.operand -> ins = function
+    | Null    -> (Movq, [ Imm (Lit 0L); dest ])
+    | Const i -> (Movq, [ Imm (Lit i); dest ])
+    | Id uid  -> (Movq, [ lookup ctxt.layout uid; dest ])
+    | Gid gid -> match lookup ctxt.layout gid with
+      | Imm  imm  | Ind1 imm -> (match imm with
+        | Lbl _ -> failwith "unimplemented"
+        | Lit l -> (Movq, [ Imm (Lit l); dest ])
+      )
+      | op -> (Movq, [ op; dest ])
 
 
 
@@ -139,7 +147,12 @@ let compile_operand (ctxt:ctxt) (dest:X86.operand) : Ll.operand -> ins =
      Your function should simply return 0 in those cases
 *)
 let rec size_ty (tdecls:(tid * ty) list) (t:Ll.ty) : int =
-failwith "size_ty not implemented"
+    match t with
+      | Void | I8 | Fun _ -> 0
+      | I1 | I64 | Ptr _ -> 8
+      | Struct fields -> List.fold_left (fun acc f -> (size_ty tdecls f) + acc) 0 fields
+      | Array (n, elems) -> n * (size_ty tdecls elems)
+      | Namedt ty -> size_ty tdecls (lookup tdecls ty)
 
 
 
@@ -222,24 +235,24 @@ let mk_lbl (fn:string) (l:string) = fn ^ "." ^ l
 *)
 let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list =
     match t with
-      | Ret (_, op) -> (* TODO: return values *)
-        let op = (match op with
-          | Some _ -> []
+      | Ret (_, op) -> (* type is in theory irrelevant? *)
+        (match op with
+          | Some op -> [ compile_operand ctxt (Reg Rax) op ]
           | None -> []
-        ) in op @ [
+        ) @ [
           (Movq, [ Reg Rbp; Reg Rsp ]);
           (Popq, [ Reg Rbp ]);
           (Retq, [])
         ]
       | Br lbl -> [
-          (Jmp, [ Imm (Lbl lbl) ]);
+          (Jmp, [ Imm (Lbl (mk_lbl fn lbl)) ]);
         ]
       | Cbr (op, take, ntake) ->
         [
           compile_operand ctxt (Reg Rax) op;
-          (Cmpq, [ Reg Rax; Imm (Lit 1L) ]);
-          (J Eq, [ Imm (Lbl take) ]);
-          (Jmp,  [ Imm (Lbl ntake) ]);
+          (Cmpq, [ Imm (Lit 1L); Reg Rax ]);
+          (J Eq, [ Imm (Lbl (mk_lbl fn take)) ]);
+          (Jmp,  [ Imm (Lbl (mk_lbl fn ntake)) ]);
         ]
 
 
@@ -251,14 +264,14 @@ let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list =
    [blk]  - LLVM IR code for the block
 *)
 let compile_block (fn:string) (ctxt:ctxt) (blk:Ll.block) : ins list =
-  let insns = List.map (compile_insn ctxt) blk.insns |> List.concat in
-  let term =
-    let lbl, term = blk.term in
-      compile_terminator lbl ctxt term in
-    insns @ term
+    let insns = List.map (compile_insn ctxt) blk.insns |> List.concat in
+    let term =
+      let lbl, term = blk.term in
+        compile_terminator lbl ctxt term in
+      insns @ term
 
 let compile_lbl_block fn ctxt (lbl, blk) : elem =
-  Asm.text (mk_lbl fn lbl) (compile_block fn ctxt blk)
+    Asm.text (mk_lbl fn lbl) (compile_block fn ctxt blk)
 
 
 
@@ -305,7 +318,7 @@ let stack_layout (args : uid list) ((block, lbled_blocks):cfg) : layout =
     ) instrs in
 
     let slots = args @ locals in
-        List.mapi (fun i id -> id, Ind3 (Lit (Int64.of_int (i*8)), Rbp)) slots
+        List.mapi (fun i id -> id, Ind3 (Lit (Int64.of_int ((i+1)*(-8))), Rbp)) slots
 
 (* The code for the entry-point of a function must do several things:
 
@@ -341,7 +354,7 @@ let compile_fdecl (tdecls:(tid * ty) list) (name:string) ({ f_ty; f_param; f_cfg
     let entry = compile_block name ctxt entry in
 
     let blocks = List.map (compile_lbl_block name ctxt) blocks in
-        [ Asm.text (Platform.mangle name) (header @ params @ entry) ] @ blocks
+        [ Asm.gtext (Platform.mangle name) (header @ params @ entry) ] @ blocks
 
 
 
