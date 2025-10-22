@@ -250,7 +250,14 @@ let compile_lbl_block fn lbl ctxt blk : elem =
    [ NOTE: the first six arguments are numbered 0 .. 5 ]
 *)
 let arg_loc (n : int) : operand =
-failwith "arg_loc not implemented"
+    match n with
+      | 0 -> Reg Rdi
+      | 1 -> Reg Rsi
+      | 2 -> Reg Rcx
+      | 3 -> Reg Rdx
+      | 4 -> Reg R08
+      | 5 -> Reg R09
+      | _ -> failwith "unreachable"
 
 
 (* We suggest that you create a helper function that computes the
@@ -263,7 +270,19 @@ failwith "arg_loc not implemented"
 
 *)
 let stack_layout (args : uid list) ((block, lbled_blocks):cfg) : layout =
-failwith "stack_layout not implemented"
+    let instrs = List.fold_left (fun a (_, blk) -> a @ blk.insns) block.insns lbled_blocks in
+    let locals = List.filter_map (fun (lbl, ins) -> match ins with
+      | Binop _ | Alloca _ | Load _ | Icmp _ | Bitcast _ | Gep _ -> Some lbl
+      | Call (ty, _, _) -> (
+          match ty with
+            | Void -> None
+            | _ -> Some lbl
+      )
+      | _ -> None
+    ) instrs in
+
+    let slots = args @ locals in
+        List.mapi (fun i id -> id, Ind3 (Lit (Int64.of_int (i*8)), Rbp)) slots
 
 (* The code for the entry-point of a function must do several things:
 
@@ -282,7 +301,24 @@ failwith "stack_layout not implemented"
      to hold all of the local stack slots.
 *)
 let compile_fdecl (tdecls:(tid * ty) list) (name:string) ({ f_ty; f_param; f_cfg }:fdecl) : prog =
-failwith "compile_fdecl unimplemented"
+    let stack = stack_layout f_param f_cfg in
+
+    let align x = if Int64.rem x 16L = 0L then x else Int64.add x 8L in
+    let frame = List.length stack |> Int64.of_int |> Int64.mul 8L |> align in
+        (* print_string ("frame size for '" ^ name ^ "' is " ^ (Int64.to_string frame) ^ "\n"); *)
+
+    let header = [
+        (Pushq, [ Reg Rbp ]);
+        (Movq,  [ Reg Rsp; Reg Rbp ]);
+        (Subq,  [ Imm (Lit frame); Reg Rsp ]);
+    ] in
+    let params = List.mapi (fun i p -> (Movq, [ arg_loc i; lookup stack p ])) f_param in
+    let footer = [
+        (Movq,  [ Reg Rbp; Reg Rsp ]);
+        (Popq,  [ Reg Rbp ]);
+        (Retq,  [])
+    ] in
+        [ Asm.text (Platform.mangle name) (header @ params @ footer) ]
 
 
 
