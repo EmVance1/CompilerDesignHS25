@@ -197,8 +197,8 @@ failwith "compile_gep not implemented"
 
    - Bitcast: does nothing interesting at the assembly level
 *)
-let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
-      failwith "compile_insn not implemented"
+let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list = []
+    (*  failwith "compile_insn not implemented" *)
 
 
 
@@ -221,7 +221,26 @@ let mk_lbl (fn:string) (l:string) = fn ^ "." ^ l
    [fn] - the name of the function containing this terminator
 *)
 let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list =
-  failwith "compile_terminator not implemented"
+    match t with
+      | Ret (_, op) -> (* TODO: return values *)
+        let op = (match op with
+          | Some _ -> []
+          | None -> []
+        ) in op @ [
+          (Movq, [ Reg Rbp; Reg Rsp ]);
+          (Popq, [ Reg Rbp ]);
+          (Retq, [])
+        ]
+      | Br lbl -> [
+          (Jmp, [ Imm (Lbl lbl) ]);
+        ]
+      | Cbr (op, take, ntake) ->
+        [
+          compile_operand ctxt (Reg Rax) op;
+          (Cmpq, [ Reg Rax; Imm (Lit 1L) ]);
+          (J Eq, [ Imm (Lbl take) ]);
+          (Jmp,  [ Imm (Lbl ntake) ]);
+        ]
 
 
 (* compiling blocks --------------------------------------------------------- *)
@@ -232,9 +251,13 @@ let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list =
    [blk]  - LLVM IR code for the block
 *)
 let compile_block (fn:string) (ctxt:ctxt) (blk:Ll.block) : ins list =
-  failwith "compile_block not implemented"
+  let insns = List.map (compile_insn ctxt) blk.insns |> List.concat in
+  let term =
+    let lbl, term = blk.term in
+      compile_terminator lbl ctxt term in
+    insns @ term
 
-let compile_lbl_block fn lbl ctxt blk : elem =
+let compile_lbl_block fn ctxt (lbl, blk) : elem =
   Asm.text (mk_lbl fn lbl) (compile_block fn ctxt blk)
 
 
@@ -253,8 +276,8 @@ let arg_loc (n : int) : operand =
     match n with
       | 0 -> Reg Rdi
       | 1 -> Reg Rsi
-      | 2 -> Reg Rcx
-      | 3 -> Reg Rdx
+      | 2 -> Reg Rdx
+      | 3 -> Reg Rcx
       | 4 -> Reg R08
       | 5 -> Reg R09
       | _ -> failwith "unreachable"
@@ -302,6 +325,7 @@ let stack_layout (args : uid list) ((block, lbled_blocks):cfg) : layout =
 *)
 let compile_fdecl (tdecls:(tid * ty) list) (name:string) ({ f_ty; f_param; f_cfg }:fdecl) : prog =
     let stack = stack_layout f_param f_cfg in
+    let ctxt  = { tdecls=tdecls; layout=stack } in
 
     let align x = if Int64.rem x 16L = 0L then x else Int64.add x 8L in
     let frame = List.length stack |> Int64.of_int |> Int64.mul 8L |> align in
@@ -313,12 +337,11 @@ let compile_fdecl (tdecls:(tid * ty) list) (name:string) ({ f_ty; f_param; f_cfg
         (Subq,  [ Imm (Lit frame); Reg Rsp ]);
     ] in
     let params = List.mapi (fun i p -> (Movq, [ arg_loc i; lookup stack p ])) f_param in
-    let footer = [
-        (Movq,  [ Reg Rbp; Reg Rsp ]);
-        (Popq,  [ Reg Rbp ]);
-        (Retq,  [])
-    ] in
-        [ Asm.text (Platform.mangle name) (header @ params @ footer) ]
+    let entry, blocks = f_cfg in
+    let entry = compile_block name ctxt entry in
+
+    let blocks = List.map (compile_lbl_block name ctxt) blocks in
+        [ Asm.text (Platform.mangle name) (header @ params @ entry) ] @ blocks
 
 
 
