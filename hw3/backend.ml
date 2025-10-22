@@ -293,7 +293,8 @@ let arg_loc (n : int) : operand =
       | 3 -> Reg Rcx
       | 4 -> Reg R08
       | 5 -> Reg R09
-      | _ -> failwith "unreachable"
+      | _ -> let off = Int64.of_int ((n-4) * 8) in
+        Ind3 (Lit off, Rbp)
 
 
 (* We suggest that you create a helper function that computes the
@@ -349,7 +350,12 @@ let compile_fdecl (tdecls:(tid * ty) list) (name:string) ({ f_ty; f_param; f_cfg
         (Movq,  [ Reg Rsp; Reg Rbp ]);
         (Subq,  [ Imm (Lit frame); Reg Rsp ]);
     ] in
-    let params = List.mapi (fun i p -> (Movq, [ arg_loc i; lookup stack p ])) f_param in
+    let params = List.mapi (fun i p -> match arg_loc i with
+      | Reg r -> [ (Movq, [ Reg r; lookup stack p ]) ]
+      | other -> [
+        (Movq, [ other; Reg Rdx ]);
+        (Movq, [ Reg Rdx; lookup stack p ])
+      ]) f_param |> List.concat in
     let entry, blocks = f_cfg in
     let entry = compile_block name ctxt entry in
 
