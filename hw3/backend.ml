@@ -104,7 +104,7 @@ let as_x86_operand (ctxt:ctxt) : Ll.operand -> X86.operand = function
     | Const i -> Imm (Lit i)
     | Id uid  -> lookup ctxt.layout uid
     | Gid gid -> match lookup ctxt.layout gid with
-      | Imm  imm  | Ind1 imm -> (match imm with
+      | Imm imm | Ind1 imm -> (match imm with
         | Lbl _ -> failwith "unimplemented"
         | Lit l -> Imm (Lit l)
       )
@@ -115,7 +115,7 @@ let compile_operand (ctxt:ctxt) (dest:X86.operand) : Ll.operand -> ins = functio
     | Const i -> (Movq, [ Imm (Lit i); dest ])
     | Id uid  -> (Movq, [ lookup ctxt.layout uid; dest ])
     | Gid gid -> match lookup ctxt.layout gid with
-      | Imm  imm  | Ind1 imm -> (match imm with
+      | Imm imm | Ind1 imm -> (match imm with
         | Lbl _ -> failwith "unimplemented"
         | Lit l -> (Movq, [ Imm (Lit l); dest ])
       )
@@ -235,8 +235,16 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
     match i with
       | Binop (bop, _, lhs, rhs) ->
         [
-          compile_operand ctxt (Reg Rsi) lhs;
-          (compile_bop bop, [ as_x86_operand ctxt rhs; Reg Rsi ]);
+          compile_operand ctxt (Reg Rdi) lhs;
+          (compile_bop bop, [ as_x86_operand ctxt rhs; Reg Rdi ]);
+          (Movq, [ Reg Rdi; lookup ctxt.layout uid ])
+        ]
+      | Icmp (cnd, _, lhs, rhs) ->
+        [
+          (Xorq, [ Reg Rsi; Reg Rsi ]);
+          compile_operand ctxt (Reg Rdi) lhs;
+          (Cmpq, [ as_x86_operand ctxt rhs; Reg Rdi ]);
+          (Set (compile_cnd cnd), [ Reg Rsi ]);
           (Movq, [ Reg Rsi; lookup ctxt.layout uid ])
         ]
       | _ -> []
