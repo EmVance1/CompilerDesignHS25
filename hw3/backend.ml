@@ -145,7 +145,6 @@ let compile_operand (ctxt:ctxt) (dest:X86.operand) : Ll.operand -> ins = functio
 
 
 
-
 (* compiling getelementptr (gep)  ------------------------------------------- *)
 
 (* The getelementptr instruction computes an address by indexing into
@@ -247,6 +246,28 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
           (Set (compile_cnd cnd), [ Reg Rsi ]);
           (Movq, [ Reg Rsi; lookup ctxt.layout uid ])
         ]
+      | Alloca _ -> (
+        let op = lookup ctxt.layout uid in
+        match op with
+          | Ind3 (Lit l, Rbp) ->
+            [
+              (Leaq, [ Ind3 (Lit (Int64.add l 8L), Rbp); Reg Rdi ]);  (* upper 8 bytes store pointer *)
+              (Movq, [ Reg Rdi; op ])                                 (* ptr -> rdi -> dest uid *)
+            ]
+          | _ -> failwith "unreachable"
+      )
+      | Load (_, op) ->
+        [
+          compile_operand ctxt (Reg Rdi) op;               (* move ptr operand into rdi *)
+          (Movq, [ Ind2 Rdi; Reg Rsi ]);                   (* deref (rdi) into rsi      *)
+          (Movq, [ Reg Rsi; lookup ctxt.layout uid ])      (* move rsi into (dest uid)  *)
+        ]
+      | Store (_, src, dest) ->
+        [
+          compile_operand ctxt (Reg Rdi) src;              (* move src operand into rdi *)
+          (Movq, [ as_x86_operand ctxt dest; Reg Rsi ]);   (* deref (rdi) into rsi      *)
+          (Movq, [ Reg Rdi; Ind2 Rsi ]);                   (* move rsi into (dest uid)  *)
+        ]
       | _ -> []
 
     (*  failwith "compile_insn not implemented" *)
@@ -344,20 +365,28 @@ let arg_loc (n : int) : operand =
    - see the discussion about locals
 
 *)
-let stack_layout (args : uid list) ((block, lbled_blocks):cfg) : layout =
+let stack_layout (args : uid list) ((block, lbled_blocks):cfg) : (int * layout) =
     let instrs = List.fold_left (fun a (_, blk) -> a @ blk.insns) block.insns lbled_blocks in
     let locals = List.filter_map (fun (lbl, ins) -> match ins with
-      | Binop _ | Alloca _ | Load _ | Icmp _ | Bitcast _ | Gep _ -> Some lbl
+      | Binop _ | Load _ | Icmp _ | Bitcast _ | Gep _ -> Some (lbl, -8)
+      | Alloca _ -> Some (lbl, -16) (* space for value and ptr *)
       | Call (ty, _, _) -> (
           match ty with
             | Void -> None
-            | _ -> Some lbl
+            | _ -> Some (lbl, -8)
       )
       | _ -> None
     ) instrs in
 
+    let args = List.map (fun id -> id, -8) args in
     let slots = args @ locals in
-        List.mapi (fun i id -> id, Ind3 (Lit (Int64.of_int ((i+1)*(-8))), Rbp)) slots
+
+    (* [ (lbl, n),... ] -> [ (lbl, sum),... ] *)
+    List.fold_left (fun (acc_n, acc_l) (x, n) ->
+      let acc_n = acc_n + n in
+        (acc_n, (x, Ind3 (Lit (Int64.of_int acc_n), Rbp)) :: acc_l))
+          (0, []) slots
+
 
 (* The code for the entry-point of a function must do several things:
 
@@ -376,11 +405,12 @@ let stack_layout (args : uid list) ((block, lbled_blocks):cfg) : layout =
      to hold all of the local stack slots.
 *)
 let compile_fdecl (tdecls:(tid * ty) list) (name:string) ({ f_ty; f_param; f_cfg }:fdecl) : prog =
-    let stack = stack_layout f_param f_cfg in
-    let ctxt  = { tdecls=tdecls; layout=stack } in
+    let frame, layout = stack_layout f_param f_cfg in
+    let ctxt  = { tdecls=tdecls; layout=layout } in
+      (* print_string ("maximum slot: " ^ Int.to_string frame ^ "(%rbp)\n"); *)
 
     let align x = if Int64.rem x 16L = 0L then x else Int64.add x 8L in
-    let frame = List.length stack |> Int64.of_int |> Int64.mul 8L |> align in
+    let frame = frame |> Int64.of_int |> Int64.mul (-1L) |> align in
 
     let header = [
         (Pushq, [ Reg Rbp ]);
@@ -388,10 +418,10 @@ let compile_fdecl (tdecls:(tid * ty) list) (name:string) ({ f_ty; f_param; f_cfg
         (Subq,  [ Imm (Lit frame); Reg Rsp ]);
     ] in
     let params = List.mapi (fun i p -> match arg_loc i with
-      | Reg r -> [ (Movq, [ Reg r; lookup stack p ]) ]
+      | Reg r -> [ (Movq, [ Reg r; lookup layout p ]) ]
       | other -> [
         (Movq, [ other; Reg Rdx ]);
-        (Movq, [ Reg Rdx; lookup stack p ])
+        (Movq, [ Reg Rdx; lookup layout p ])
       ]) f_param |> List.concat in
     let entry, blocks = f_cfg in
     let entry = compile_block name ctxt entry in
