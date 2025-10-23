@@ -142,6 +142,8 @@ let compile_operand (ctxt:ctxt) (dest:X86.operand) : Ll.operand -> ins = functio
    [ NOTE: Don't forget to preserve caller-save registers (only if
    needed). ]
 *)
+let compile_call (ctxt:ctxt) (op : Ll.operand) (args:(Ll.ty * Ll.operand) list) : ins list =
+  failwith "compile_gep not implemented"
 
 
 
@@ -268,9 +270,13 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
           (Movq, [ as_x86_operand ctxt dest; Reg Rsi ]);   (* deref (rdi) into rsi      *)
           (Movq, [ Reg Rdi; Ind2 Rsi ]);                   (* move rsi into (dest uid)  *)
         ]
-      | _ -> []
-
-    (*  failwith "compile_insn not implemented" *)
+      | Bitcast (_, src, _) ->
+        [
+          compile_operand ctxt (Reg Rdi) src;
+          (Movq, [ Reg Rdi; lookup ctxt.layout uid ]);
+        ]
+      | Call (_, fn, args) -> compile_call ctxt fn args
+      | Gep (ty, op, path) -> compile_gep ctxt (ty, op) path
 
 
 
@@ -294,7 +300,7 @@ let mk_lbl (fn:string) (l:string) = fn ^ "." ^ l
 *)
 let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list =
     match t with
-      | Ret (_, op) -> (* type is in theory irrelevant? *)
+      | Ret (_, op) ->
         (match op with
           | Some op -> [ compile_operand ctxt (Reg Rax) op ]
           | None -> []
@@ -308,8 +314,8 @@ let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list =
         ]
       | Cbr (op, take, ntake) ->
         [
-          compile_operand ctxt (Reg Rax) op;
-          (Cmpq, [ Imm (Lit 1L); Reg Rax ]);
+          compile_operand ctxt (Reg Rdi) op;
+          (Cmpq, [ Imm (Lit 1L); Reg Rdi ]);
           (J Eq, [ Imm (Lbl (mk_lbl fn take)) ]);
           (Jmp,  [ Imm (Lbl (mk_lbl fn ntake)) ]);
         ]
@@ -410,7 +416,7 @@ let compile_fdecl (tdecls:(tid * ty) list) (name:string) ({ f_ty; f_param; f_cfg
       (* print_string ("maximum slot: " ^ Int.to_string frame ^ "(%rbp)\n"); *)
 
     let align x = if Int64.rem x 16L = 0L then x else Int64.add x 8L in
-    let frame = frame |> Int64.of_int |> Int64.mul (-1L) |> align in
+    let frame = frame |> Int64.of_int |> Int64.neg |> align in
 
     let header = [
         (Pushq, [ Reg Rbp ]);
