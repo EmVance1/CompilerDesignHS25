@@ -22,6 +22,17 @@ let compile_cnd = function
   | Ll.Sgt -> X86.Gt
   | Ll.Sge -> X86.Ge
 
+let compile_bop = function
+  | Ll.Add  -> X86.Addq
+  | Ll.Sub  -> X86.Subq
+  | Ll.Mul  -> X86.Imulq
+  | Ll.Shl  -> X86.Shlq
+  | Ll.Lshr -> X86.Shrq
+  | Ll.Ashr -> X86.Sarq
+  | Ll.And  -> X86.Andq
+  | Ll.Or   -> X86.Orq
+  | Ll.Xor  -> X86.Xorq
+
 
 
 (* locals and layout -------------------------------------------------------- *)
@@ -88,6 +99,17 @@ let lookup m x = List.assoc x m
    the X86 instruction that moves an LLVM operand into a designated
    destination (usually a register).
 *)
+let as_x86_operand (ctxt:ctxt) : Ll.operand -> X86.operand = function
+    | Null    -> Imm (Lit 0L)
+    | Const i -> Imm (Lit i)
+    | Id uid  -> lookup ctxt.layout uid
+    | Gid gid -> match lookup ctxt.layout gid with
+      | Imm  imm  | Ind1 imm -> (match imm with
+        | Lbl _ -> failwith "unimplemented"
+        | Lit l -> Imm (Lit l)
+      )
+      | op -> op
+
 let compile_operand (ctxt:ctxt) (dest:X86.operand) : Ll.operand -> ins = function
     | Null    -> (Movq, [ Imm (Lit 0L); dest ])
     | Const i -> (Movq, [ Imm (Lit i); dest ])
@@ -156,7 +178,6 @@ let rec size_ty (tdecls:(tid * ty) list) (t:Ll.ty) : int =
 
 
 
-
 (* Generates code that computes a pointer value.
 
    1. op must be of pointer type: t*
@@ -210,7 +231,16 @@ failwith "compile_gep not implemented"
 
    - Bitcast: does nothing interesting at the assembly level
 *)
-let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list = []
+let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
+    match i with
+      | Binop (bop, _, lhs, rhs) ->
+        [
+          compile_operand ctxt (Reg Rsi) lhs;
+          (compile_bop bop, [ as_x86_operand ctxt rhs; Reg Rsi ]);
+          (Movq, [ Reg Rsi; lookup ctxt.layout uid ])
+        ]
+      | _ -> []
+
     (*  failwith "compile_insn not implemented" *)
 
 
@@ -343,7 +373,6 @@ let compile_fdecl (tdecls:(tid * ty) list) (name:string) ({ f_ty; f_param; f_cfg
 
     let align x = if Int64.rem x 16L = 0L then x else Int64.add x 8L in
     let frame = List.length stack |> Int64.of_int |> Int64.mul 8L |> align in
-        (* print_string ("frame size for '" ^ name ^ "' is " ^ (Int64.to_string frame) ^ "\n"); *)
 
     let header = [
         (Pushq, [ Reg Rbp ]);
