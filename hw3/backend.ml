@@ -102,24 +102,26 @@ let lookup m x = List.assoc x m
 let as_x86_operand (ctxt:ctxt) : Ll.operand -> X86.operand = function
     | Null    -> Imm (Lit 0L)
     | Const i -> Imm (Lit i)
-    | Id uid  -> lookup ctxt.layout uid
-    | Gid gid -> match lookup ctxt.layout gid with
+    | Id uid  -> lookup ctxt.layout uid 
+    | Gid gid -> failwith "GID not supported as direct operand"
+    (* | Gid gid -> match lookup ctxt.layout gid with
       | Imm imm | Ind1 imm -> (match imm with
         | Lbl _ -> failwith "unimplemented"
         | Lit l -> Imm (Lit l)
       )
-      | op -> op
+      | op -> op *)
 
 let compile_operand (ctxt:ctxt) (dest:X86.operand) : Ll.operand -> ins = function
     | Null    -> (Movq, [ Imm (Lit 0L); dest ])
     | Const i -> (Movq, [ Imm (Lit i); dest ])
     | Id uid  -> (Movq, [ lookup ctxt.layout uid; dest ])
-    | Gid gid -> match lookup ctxt.layout gid with
+    | Gid gid -> (Leaq, [ Ind3 (Lbl (Platform.mangle gid), Rip); dest ]) 
+      (* with
       | Imm imm | Ind1 imm -> (match imm with
         | Lbl _ -> failwith "unimplemented"
         | Lit l -> (Movq, [ Imm (Lit l); dest ])
       )
-      | op -> (Movq, [ op; dest ])
+      | op -> (Movq, [ op; dest ]) *)
 
 
 
@@ -142,8 +144,62 @@ let compile_operand (ctxt:ctxt) (dest:X86.operand) : Ll.operand -> ins = functio
    [ NOTE: Don't forget to preserve caller-save registers (only if
    needed). ]
 *)
-let compile_call (ctxt:ctxt) (op : Ll.operand) (args:(Ll.ty * Ll.operand) list) : ins list =
-  failwith "compile_gep not implemented"
+let compile_call (ctxt:ctxt) (uid: uid) (ret_ty: Ll.ty) (fn : Ll.operand) (args:(Ll.ty * Ll.operand) list) : ins list =
+  let arg_operands = List.map snd args in
+  let arg_regs = [Reg Rdi; Reg Rsi; Reg Rdx; Reg Rcx; Reg R08; Reg R09] in
+  let num_args = List.length arg_operands in
+  let reg_args, stack_args =
+    if num_args <= 6 then
+      (arg_operands, [])
+    else
+      let reg_args' = List.filteri (fun i _ -> i < 6) arg_operands in
+      let stack_args' = List.filteri (fun i _ -> i >= 6) arg_operands in
+      (reg_args', stack_args')
+  in
+  let move_instructions =
+  List.mapi (fun i op ->
+    let dest_reg = List.nth arg_regs i in
+    [compile_operand ctxt dest_reg op]
+  ) reg_args
+  |> List.concat
+in
+  let push_instructions =
+  List.rev stack_args |> List.map (fun op ->
+      [ compile_operand ctxt (Reg Rax) op; (Pushq, [Reg Rax]) ]
+    )
+  |> List.concat
+in
+
+  let num_stack_args = List.length stack_args in
+  let alignment_padding, padding_size =
+    if num_stack_args mod 2 <> 0 then
+      ([(Subq, [Imm (Lit 8L); Reg Rsp])], 8)
+    else
+      ([], 0)
+  in
+  let call_instruction =
+    match fn with
+    | Gid gid -> [(Callq, [Imm (Lbl (Platform.mangle gid))])]
+    | _ -> [compile_operand ctxt (Reg Rax) fn; (Callq, [Reg Rax])]
+  in
+  let cleanup_size = Int64.of_int ((num_stack_args * 8) + padding_size) in
+  let cleanup_instructions =
+    if cleanup_size > 0L then
+      [(Addq, [Imm (Lit cleanup_size); Reg Rsp])]
+    else
+      []
+  in
+  let ret_instructions =
+    match ret_ty with
+      | Void -> []
+      | _ -> [ (Movq, [ Reg Rax; lookup ctxt.layout uid ]) ]
+  in
+  move_instructions @
+  push_instructions @
+  alignment_padding @
+  call_instruction @
+  cleanup_instructions @
+  ret_instructions
 
 
 
@@ -204,8 +260,64 @@ let rec size_ty (tdecls:(tid * ty) list) (t:Ll.ty) : int =
       in (4), but relative to the type f the sub-element picked out
       by the path so far
 *)
-let compile_gep (ctxt:ctxt) (op : Ll.ty * Ll.operand) (path: Ll.operand list) : ins list =
-failwith "compile_gep not implemented"
+let rec resolve_ty tdecls ty =
+  match ty with
+  | Namedt tid -> resolve_ty tdecls (lookup tdecls tid)
+  | _ -> ty
+
+let struct_field_offset (tdecls:(tid * ty) list) (fields:(Ll.ty) list) (idx:int) : int * Ll.ty =
+  let rec loop acc i = function
+    | [] -> failwith "GEP: struct index out of bounds"
+    | fty :: rest ->
+        if i = idx then (acc, fty)
+        else loop (acc + (size_ty tdecls fty)) (i + 1) rest
+  in
+  loop 0 0 fields
+
+let compile_gep (ctxt:ctxt) (uid: uid) (op_ty:Ll.ty) (op:Ll.operand) (path: Ll.operand list) : ins list =
+  let base_insns = [compile_operand ctxt (Reg Rax) op] in
+  let initial_state = (base_insns, op_ty) in
+  let computation_insns, _ =
+    List.fold_left
+      (fun (acc_insns, current_ty) index_op ->
+        let resolved_ty = resolve_ty ctxt.tdecls current_ty in
+        let load_index_insns = [compile_operand ctxt (Reg Rdx) index_op] in
+        let offset_insns, next_ty =
+          match resolved_ty with
+          | Ptr ty ->
+              let scale = size_ty ctxt.tdecls ty |> Int64.of_int in
+              let offset_insns = [
+                (Imulq, [Imm (Lit scale); Reg Rdx]);
+                (Addq, [Reg Rdx; Reg Rax])
+              ] in
+              (offset_insns, ty)
+
+          | Array (_, elem_ty) ->
+              let scale = size_ty ctxt.tdecls elem_ty |> Int64.of_int in
+              let offset_insns = [
+                (Imulq, [Imm (Lit scale); Reg Rdx]);
+                (Addq, [Reg Rdx; Reg Rax])
+              ] in
+              (offset_insns, elem_ty)
+          | Struct fields ->
+              (match index_op with
+              | Const i ->
+                  let idx = Int64.to_int i in
+                  let offset, field_ty = struct_field_offset ctxt.tdecls fields idx in
+                  ([(Addq, [Imm (Lit (Int64.of_int offset)); Reg Rax])], field_ty)
+              | _ -> failwith "GEP: struct index must be a constant")
+
+          | _ -> failwith "GEP: can only index into pointers, arrays, or structs"
+        in
+        (acc_insns @ load_index_insns @ offset_insns, next_ty)
+      )
+      initial_state
+      path
+  in
+  let final_mov = (Movq, [Reg Rax; lookup ctxt.layout uid]) in
+
+  computation_insns @ [final_mov]
+
 
 
 
@@ -236,9 +348,10 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
     match i with
       | Binop (bop, _, lhs, rhs) ->
         [
-          compile_operand ctxt (Reg Rdi) lhs;
-          (compile_bop bop, [ as_x86_operand ctxt rhs; Reg Rdi ]);
-          (Movq, [ Reg Rdi; lookup ctxt.layout uid ])
+          compile_operand ctxt (Reg Rax) lhs;
+          compile_operand ctxt (Reg Rcx) rhs;
+          (compile_bop bop, [ Reg Rcx; Reg Rax ]);
+          (Movq, [ Reg Rax; lookup ctxt.layout uid ])
         ]
       | Icmp (cnd, _, lhs, rhs) ->
         [
@@ -275,8 +388,8 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
           compile_operand ctxt (Reg Rdi) src;
           (Movq, [ Reg Rdi; lookup ctxt.layout uid ]);
         ]
-      | Call (_, fn, args) -> compile_call ctxt fn args
-      | Gep (ty, op, path) -> compile_gep ctxt (ty, op) path
+      | Call (ty, op, args) -> compile_call ctxt uid ty op args
+      | Gep (ty, op, path) -> compile_gep ctxt uid ty op path
 
 
 
