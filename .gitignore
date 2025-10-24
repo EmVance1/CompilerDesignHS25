@@ -10,4 +10,5 @@ hw1
 */dune-project
 */output
 *.zip
+*/output
 main.native
