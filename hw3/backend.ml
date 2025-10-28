@@ -104,24 +104,12 @@ let as_x86_operand (ctxt:ctxt) : Ll.operand -> X86.operand = function
     | Const i -> Imm (Lit i)
     | Id uid  -> lookup ctxt.layout uid 
     | Gid gid -> failwith "GID not supported as direct operand"
-    (* | Gid gid -> match lookup ctxt.layout gid with
-      | Imm imm | Ind1 imm -> (match imm with
-        | Lbl _ -> failwith "unimplemented"
-        | Lit l -> Imm (Lit l)
-      )
-      | op -> op *)
 
 let compile_operand (ctxt:ctxt) (dest:X86.operand) : Ll.operand -> ins = function
     | Null    -> (Movq, [ Imm (Lit 0L); dest ])
     | Const i -> (Movq, [ Imm (Lit i); dest ])
     | Id uid  -> (Movq, [ lookup ctxt.layout uid; dest ])
-    | Gid gid -> (Leaq, [ Ind3 (Lbl (Platform.mangle gid), Rip); dest ]) 
-      (* with
-      | Imm imm | Ind1 imm -> (match imm with
-        | Lbl _ -> failwith "unimplemented"
-        | Lit l -> (Movq, [ Imm (Lit l); dest ])
-      )
-      | op -> (Movq, [ op; dest ]) *)
+    | Gid gid -> (Leaq, [ Ind3 (Lbl (Platform.mangle gid), Rip); dest ])
 
 
 
