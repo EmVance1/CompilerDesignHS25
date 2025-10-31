@@ -1,0 +1,7 @@
+global x = 3;
+global y = "hello";
+
+int program(int argc, string[] argv) {
+  print_string(y);
+  return 0;
+}
