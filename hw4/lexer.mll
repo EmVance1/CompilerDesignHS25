@@ -1,3 +1,4 @@
+(* :lua vim.treesitter.start(0, "ocamllex") *)
 {
   open Lexing
   open Parser
