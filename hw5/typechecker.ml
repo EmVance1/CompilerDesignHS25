@@ -238,7 +238,7 @@ let rec typecheck_exp (c : Tctxt.t) (e : Ast.exp node) : Ast.ty =
               type_error arg_exp "Function argument type mismatch"
           ) param_tys args;
           (match ret_ty with
-          | RetVoid -> TBool
+          | RetVoid -> type_error e "Void function cannot be used in an expression context"
           | RetVal t -> t)
       | _ -> type_error fun_exp "Call requires a function type")
   | Bop (Eq, e1, e2)
