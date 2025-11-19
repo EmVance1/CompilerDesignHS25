@@ -46,12 +46,48 @@ let typ_of_unop : Ast.unop -> Ast.ty * Ast.ty = function
       relation. We have included a template for subtype_ref to get you started.
       (Don't forget about OCaml's 'and' keyword.)
 *)
-let rec subtype (c : Tctxt.t) (t1 : Ast.ty) (t2 : Ast.ty) : bool =
-  failwith "todo: subtype"
+let rec subtype_ret (c : Tctxt.t) (rt1 : Ast.ret_ty) (rt2 : Ast.ret_ty) : bool =
+  match (rt1, rt2) with
+  | RetVoid, RetVoid -> true
+  | RetVal t1, RetVal t2 -> subtype c t1 t2
+  | _, _ -> false
+
+and subtype (c : Tctxt.t) (t1 : Ast.ty) (t2 : Ast.ty) : bool =
+  match (t1, t2) with
+  | TInt, TInt -> true
+  | TBool, TBool -> true
+  | TRef r1, TRef r2 -> subtype_ref c r1 r2
+  | TRef r1, TNullRef r2 -> subtype_ref c r1 r2
+  | TNullRef r1, TNullRef r2 -> subtype_ref c r1 r2
+  | _ -> false
 
 (* Decides whether H |-r ref1 <: ref2 *)
 and subtype_ref (c : Tctxt.t) (t1 : Ast.rty) (t2 : Ast.rty) : bool =
-  failwith "todo: subtype_ref"
+  match (t1, t2) with
+  | RString, RString -> true
+  | RArray at1, RArray at2 -> at1 = at2
+  | RStruct id1, RStruct id2 ->
+    let fs1 = Tctxt.lookup_struct id1 c in
+    let fs2 = Tctxt.lookup_struct id2 c in
+    let rec check_fields f1 f2 =
+      match (f1, f2) with
+      | _, [] -> true
+      | [], _ -> false
+      | h1::t1, h2::t2 ->
+        if h1.fieldName = h2.fieldName && h1.ftyp = h2.ftyp
+        then check_fields t1 t2
+        else false
+    in
+    check_fields fs1 fs2
+  | RFun (args1, ret1), RFun (args2, ret2) ->
+    if List.length args1 <> List.length args2 then false
+    else
+      let args_subtype =
+        List.for_all2 (fun arg_sub arg_super -> subtype c arg_super arg_sub) args1 args2
+      in
+      let ret_subtype = subtype_ret c ret1 ret2 in
+      args_subtype && ret_subtype
+  | _ -> false
 
 
 (* well-formed types -------------------------------------------------------- *)
