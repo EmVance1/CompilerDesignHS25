@@ -151,10 +151,12 @@ let compile_call ctxt fop args =
     in register_arg_code @ stack_arg_code
   in
 
-  arg_code @ call_code @
-  (X86.Callq, [op])  ::
+  let stack_alignment_offset = if ((List.length args) > 6) && ((List.length args) mod 2 = 1) then 1 else 0 in
+  let stack_alignment_pre = if (stack_alignment_offset == 1) then Asm.([Subq, [(imm_of_int 8); ~%Rsp]]) else [] in
+  let align_stack_prologue = Asm.([Andq, [(imm_of_int (-16)); ~%Rsp]]) @ stack_alignment_pre in
+    align_stack_prologue @ arg_code @ call_code @
   (if (List.length args) > 6 then
-     Asm.([Addq, [imm_of_int (8 * ((List.length args) - 6)); ~%Rsp]])
+    Asm.([Addq, [imm_of_int (8 * (((List.length args) - 6) + stack_alignment_offset)); ~%Rsp]])
    else [])
 
 (* compiling getelementptr (gep)  ------------------------------------------- *)

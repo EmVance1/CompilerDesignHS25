@@ -602,8 +602,8 @@ let cmp_global_ctxt (tc : TypeCtxt.t) (c:Ctxt.t) (p:Ast.prog) : Ctxt.t =
     | CNull r -> cmp_ty tc (TNullRef r)
     | CBool b -> I1
     | CInt i  -> I64
-    | CStr s  -> Ptr (str_arr_ty s)
-    | CArr (u, cs) -> Ptr (Struct [I64; Array(List.length cs, cmp_ty tc u)])
+    | CStr s  -> Ptr I8
+    | CArr (u, cs) -> Ptr (Struct [I64; Array(0, cmp_ty tc u)])
     | x -> failwith ( "bad global initializer: " ^ (Astlib.string_of_exp (no_loc x)))
   in
   List.fold_left (fun c -> function
@@ -662,7 +662,9 @@ let rec cmp_gexp c (tc : TypeCtxt.t) (e:Ast.exp node) : Ll.gdecl * (Ll.gid * Ll.
   | CStr s ->
     let gid = gensym "str" in
     let ll_ty = str_arr_ty s in
-    (Ptr ll_ty, GGid gid), [gid, (ll_ty, GString s)]
+    let cast = GBitcast (Ptr ll_ty, GGid gid, Ptr I8) in
+    (Ptr I8, cast), [gid, (ll_ty, GString s)]
+
 
   | CArr (u, cs) ->
     let elts, gs = List.fold_right
@@ -675,7 +677,9 @@ let rec cmp_gexp c (tc : TypeCtxt.t) (e:Ast.exp node) : Ll.gdecl * (Ll.gid * Ll.
     let gid = gensym "global_arr" in
     let arr_t = Struct [ I64; Array(len, ll_u) ] in
     let arr_i = GStruct [ I64, GInt (Int64.of_int len); Array(len, ll_u), GArray elts ] in
-    (Ptr arr_t, GGid gid), (gid, (arr_t, arr_i))::gs
+    let final_t = Struct [ I64; Array(0, ll_u) ] in
+    let cast = GBitcast (Ptr arr_t, GGid gid, Ptr final_t) in
+      (Ptr final_t, cast), (gid, (arr_t, arr_i))::gs
 
   (* STRUCT TASK: Complete this code that generates the global initializers for a struct value. *)  
   | CStruct (id, cs) ->
