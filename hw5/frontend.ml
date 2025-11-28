@@ -254,10 +254,9 @@ let rec cmp_exp (tc : TypeCtxt.t) (c:Ctxt.t) (exp:Ast.exp node) : Ll.ty * Ll.ope
     >:: I(uid, Gep(Ptr str_typ, Gid gid, [Const 0L; Const 0L;]))
 
   | Ast.Bop (bop, e1, e2) ->
-    let t, _, ret_ty = typ_of_binop bop in
-    let ll_t = cmp_ty tc t in
-    let op1, code1 = cmp_exp_as tc c e1 ll_t in
-    let op2, code2 = cmp_exp_as tc c e2 ll_t in
+    let _, _, ret_ty = typ_of_binop bop in
+    let ll_t, op1, code1 = cmp_exp tc c e1 in
+    let _, op2, code2 = cmp_exp tc c e2 in
     let ans_id = gensym "bop" in 
     cmp_ty tc ret_ty, Id ans_id, code1 >@ code2 >:: I(ans_id, cmp_binop ll_t bop op1 op2)
 
