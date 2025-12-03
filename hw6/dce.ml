@@ -21,10 +21,25 @@ open Datastructures
 
    Hint: Consider using List.filter
  *)
-let dce_block (lb:uid -> Liveness.Fact.t) 
-              (ab:uid -> Alias.fact)
-              (b:Ll.block) : Ll.block =
-  failwith "Dce.dce_block unimplemented"
+let is_alive (lb:uid -> Liveness.Fact.t) (ab:uid -> Alias.fact) : (uid * insn) -> bool = function
+  | _, Call _ -> true
+  | u, Store(_, _, op) -> (match op with
+    | Id id  -> (
+      let live   = UidS.mem id @@ lb u in
+      let al_opt = UidM.find_opt id @@ ab u in
+      let alias  = (match al_opt with
+        | Some p -> p = Alias.SymPtr.MayAlias
+        | None -> false) in
+        live || alias
+    )
+    | _ -> false
+  )
+  | u, _ -> UidS.mem u @@ lb u
+  
+
+let dce_block (lb:uid -> Liveness.Fact.t) (ab:uid -> Alias.fact) (b:Ll.block) : Ll.block =
+  { insns=List.filter (is_alive lb ab) b.insns; term=b.term }
+
 
 let run (lg:Liveness.Graph.t) (ag:Alias.Graph.t) (cfg:Cfg.t) : Cfg.t =
 

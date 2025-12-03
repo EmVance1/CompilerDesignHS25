@@ -34,7 +34,46 @@ type fact = SymPtr.t UidM.t
 
  *)
 let insn_flow ((u,i):uid * insn) (d:fact) : fact =
-  failwith "Alias.insn_flow unimplemented"
+  let uid_if_ptr (t, op) = match t with
+    | Ptr _ -> (match op with | Id u -> Some u | _ -> None)
+    | _ -> None in
+
+  match i with
+    | Ll.Alloca _  -> UidM.add u SymPtr.Unique d
+    | Ll.Load(ty, op) -> (
+      match ty with
+        | Ptr Ptr _ -> (match op with | Id _ -> UidM.add u SymPtr.MayAlias d | _ -> d)
+        | _ -> d
+    )
+    | Ll.Call(ty, _, args) -> (
+      let p_ids  = List.filter_map uid_if_ptr args in
+      let maybes = (match ty with
+        | Ptr _ -> u :: p_ids
+        | _ -> p_ids) in
+      List.fold_left (fun acc u -> UidM.add u SymPtr.MayAlias acc) d maybes
+    )
+    | Ll.Bitcast(t1, op, t2) -> (
+      let d = match t1 with
+        | Ptr _ -> UidM.add u SymPtr.MayAlias d
+        | _ -> d in
+      match t2 with
+        | Ptr _ -> (match op with | Id u -> UidM.add u SymPtr.MayAlias d | _ -> d)
+        | _ -> d
+    )
+    | Ll.Gep(ty, op, _) -> (
+      let d = match ty with
+        | Ptr _ -> UidM.add u SymPtr.MayAlias d
+        | _ -> d in
+      match op with
+        | Id u -> UidM.add u SymPtr.MayAlias d
+        | _ -> d
+    )
+    | Ll.Store(ty, op, _) -> (
+      match ty with
+        | Ptr _ -> (match op with | Id u -> UidM.add u SymPtr.MayAlias d | _ -> d)
+        | _ -> d
+    )
+    | _ -> d
 
 
 (* The flow function across terminators is trivial: they never change alias info *)
@@ -68,8 +107,23 @@ module Fact =
        It may be useful to define a helper function that knows how to take the
        join of two SymPtr.t facts.
     *)
+    let join = UidM.merge (fun _ a b ->
+      match a, b with
+        | Some a, Some b -> Some (
+          if a = SymPtr.MayAlias || b = SymPtr.MayAlias then
+            SymPtr.MayAlias
+          else if a = SymPtr.Unique || b = SymPtr.Unique then
+            SymPtr.Unique
+          else
+            SymPtr.UndefAlias
+        )
+        | Some a, None   -> Some a
+        | None, Some b   -> Some b
+        | None, None     -> None)
+
     let combine (ds:fact list) : fact =
-      failwith "Alias.Fact.combine not implemented"
+      List.fold_left join (UidM.empty) ds
+
   end
 
 (* instantiate the general framework ---------------------------------------- *)
