@@ -36,8 +36,54 @@ type fact = SymConst.t UidM.t
    - Uid of stores and void calls are UndefConst-out
    - Uid of all other instructions are NonConst-out
  *)
+let bop_fn = function
+  | Add  -> Int64.add
+  | Sub  -> Int64.sub
+  | Mul  -> Int64.mul
+  | Shl  -> fun a b -> Int64.shift_left a (Int64.to_int b)
+  | Lshr -> fun a b -> Int64.shift_right_logical a (Int64.to_int b)
+  | Ashr -> fun a b -> Int64.shift_right a (Int64.to_int b)
+  | And  -> Int64.logand
+  | Or   -> Int64.logor
+  | Xor  -> Int64.logxor
+
+let cmp_fn = function
+  | Eq  -> fun a b -> if Int64.equal a b then 1L else 0L
+  | Ne  -> fun a b -> if not @@ Int64.equal a b then 1L else 0L
+  | Slt -> fun a b -> if Int64.compare a b <  0 then 1L else 0L
+  | Sle -> fun a b -> if Int64.compare a b <= 0 then 1L else 0L
+  | Sgt -> fun a b -> if Int64.compare a b >  0 then 1L else 0L
+  | Sge -> fun a b -> if Int64.compare a b >= 0 then 1L else 0L
+
+
 let insn_flow (u,i:uid * insn) (d:fact) : fact =
-  failwith "Constprop.insn_flow unimplemented"
+  let get_sym = function
+    | Gid id -> UidM.find_or SymConst.UndefConst d id
+    | Id  id -> UidM.find_or SymConst.UndefConst d id
+    | Const i -> SymConst.Const i
+    | Null    -> SymConst.Const 0L in
+
+  let get_vals a b bin = (match a, b with
+    | SymConst.Const c1, SymConst.Const c2 -> SymConst.Const (bin c1 c2)
+    | SymConst.UndefConst, _ -> SymConst.UndefConst
+    | SymConst.NonConst,   _ -> SymConst.NonConst
+    | _, SymConst.UndefConst -> SymConst.UndefConst
+    | _, SymConst.NonConst   -> SymConst.NonConst) in
+
+  match i with
+    | Ll.Binop(bop, _, op1, op2) -> (
+      let c1 = get_sym op1 in
+      let c2 = get_sym op2 in
+        UidM.add u (get_vals c1 c2 (bop_fn bop)) d
+    )
+    | Ll.Icmp(cnd, _, op1, op2) -> (
+      let c1 = get_sym op1 in
+      let c2 = get_sym op2 in
+        UidM.add u (get_vals c1 c2 (cmp_fn cnd)) d
+    )
+    | Ll.Call(Void, _, _) | Ll.Store _ -> UidM.add u SymConst.UndefConst d
+    | _ -> UidM.add u SymConst.NonConst d
+
 
 (* The flow function across terminators is trivial: they never change const info *)
 let terminator_flow (t:terminator) (d:fact) : fact = d
@@ -62,8 +108,21 @@ module Fact =
 
     (* The constprop analysis should take the meet over predecessors to compute the
        flow into a node. You may find the UidM.merge function useful *)
-    let combine (ds:fact list) : fact = 
-      failwith "Constprop.Fact.combine unimplemented"
+    let join = UidM.merge (fun _ a b ->
+      match a, b with
+        | Some a, Some b -> Some (match a, b with
+          | SymConst.Const a, SymConst.Const b -> if a = b then SymConst.Const a else SymConst.NonConst
+          | SymConst.NonConst, _ -> SymConst.NonConst
+          | _, SymConst.NonConst -> SymConst.NonConst
+          | _ -> SymConst.UndefConst
+        )
+        | Some a, None   -> Some a
+        | None, Some b   -> Some b
+        | None, None     -> None)
+
+    let combine (ds:fact list) : fact =
+      List.fold_left join (UidM.empty) ds
+
   end
 
 (* instantiate the general framework ---------------------------------------- *)

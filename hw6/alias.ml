@@ -112,10 +112,8 @@ module Fact =
         | Some a, Some b -> Some (
           if a = SymPtr.MayAlias || b = SymPtr.MayAlias then
             SymPtr.MayAlias
-          else if a = SymPtr.Unique || b = SymPtr.Unique then
-            SymPtr.Unique
           else
-            SymPtr.UndefAlias
+            SymPtr.Unique
         )
         | Some a, None   -> Some a
         | None, Some b   -> Some b

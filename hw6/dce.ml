@@ -26,13 +26,11 @@ let is_alive (lb:uid -> Liveness.Fact.t) (ab:uid -> Alias.fact) : (uid * insn) -
   | u, Store(_, _, op) -> (match op with
     | Id id  -> (
       let live   = UidS.mem id @@ lb u in
-      let al_opt = UidM.find_opt id @@ ab u in
-      let alias  = (match al_opt with
-        | Some p -> p = Alias.SymPtr.MayAlias
-        | None -> false) in
+      let alias = UidM.find_or Alias.SymPtr.UndefAlias (ab u) id in
+      let alias = alias = Alias.SymPtr.MayAlias in
         live || alias
     )
-    | _ -> false
+    | _ -> failwith "unreachable"
   )
   | u, _ -> UidS.mem u @@ lb u
   
