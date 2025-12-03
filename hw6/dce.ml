@@ -33,7 +33,7 @@ let is_alive (lb:uid -> Liveness.Fact.t) (ab:uid -> Alias.fact) : (uid * insn) -
     | _ -> failwith "unreachable"
   )
   | u, _ -> UidS.mem u @@ lb u
-  
+
 
 let dce_block (lb:uid -> Liveness.Fact.t) (ab:uid -> Alias.fact) (b:Ll.block) : Ll.block =
   { insns=List.filter (is_alive lb ab) b.insns; term=b.term }

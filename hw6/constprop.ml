@@ -148,14 +148,57 @@ let analyze (g:Cfg.t) : Graph.t =
 (* run constant propagation on a cfg given analysis results ----------------- *)
 (* HINT: your cp_block implementation will probably rely on several helper 
    functions.                                                                 *)
+let prop (cb:uid -> fact) (t:uid) (op:operand) : operand = match op with
+  | Id id -> (
+    let con = UidM.find_or SymConst.NonConst (cb t) id in
+    match con with
+      | SymConst.Const i -> Const i
+      | _ -> op
+  )
+  | Gid id -> (
+    let con = UidM.find_or SymConst.NonConst (cb t) id in
+    match con with
+      | SymConst.Const i -> Const i
+      | _ -> op
+  )
+  | op -> op
+
+let prop_insn (cb:uid -> fact) : (uid * insn) -> (uid * insn) = function
+  | u, Binop(bop, ty, op1, op2) -> u, Binop(bop, ty, prop cb u op1, prop cb u op2)
+  | u, Load(ty, op)             -> u, Load(ty, prop cb u op)
+  | u, Store(ty, v, dest)       -> u, Store(ty, prop cb u v, dest)
+  | u, Icmp(cnd, ty, op1, op2)  -> u, Icmp(cnd, ty, prop cb u op1, prop cb u op2)
+  | u, Call(ty, op, args)       -> u, Call(ty, op, List.map (fun (ty, op) -> ty, prop cb u op) args)
+  | u, Bitcast(t1, op, t2)      -> u, Bitcast(t1, prop cb u op, t2)
+  | u, Gep(ty, op, args)        -> u, Gep(ty, op, List.map (prop cb u) args)
+  | u, i -> u, i
+
+let prop_term (cb:uid -> fact) : (gid * terminator) -> (gid * terminator) = function
+  | g, Ret (ty, op) -> (match op with
+    | Some op -> g, Ret(ty, Some(prop cb g op))
+    | None    -> g, Ret(ty, None)
+  )
+  | g, Cbr (op, l1, l2) -> g, Cbr(prop cb g op, l1, l2)
+  | g, i -> g, i
+
+
+let prop_block (cb:uid -> fact) (b:Ll.block) : Ll.block =
+  { insns=List.map (prop_insn cb) b.insns; term=prop_term cb b.term }
+
+
 let run (cg:Graph.t) (cfg:Cfg.t) : Cfg.t =
   let open SymConst in
   
 
   let cp_block (l:Ll.lbl) (cfg:Cfg.t) : Cfg.t =
     let b = Cfg.block cfg l in
+
+    (* compute constants at each program point for the block *)
     let cb = Graph.uid_out cg l in
-    failwith "Constprop.cp_block unimplemented"
+
+    (* compute optimized block *)
+    let b' = prop_block cb b in
+    Cfg.add_block l b' cfg
   in
 
   LblS.fold cp_block (Cfg.nodes cfg) cfg
