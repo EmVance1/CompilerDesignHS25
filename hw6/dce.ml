@@ -23,16 +23,16 @@ open Datastructures
  *)
 let is_alive (lb:uid -> Liveness.Fact.t) (ab:uid -> Alias.fact) : (uid * insn) -> bool = function
   | _, Call _ -> true
-  | u, Store(_, _, op) -> (match op with
-    | Id id  -> (
-      let live   = UidS.mem id @@ lb u in
-      let alias = UidM.find_or Alias.SymPtr.UndefAlias (ab u) id in
-      let alias = alias = Alias.SymPtr.MayAlias in
-        live || alias
-    )
-    | _ -> failwith "unreachable"
-  )
-  | u, _ -> UidS.mem u @@ lb u
+  | _, Store(_, _, Gid _) -> true (* Stores to globals are always live *)
+  | u, Store(_, _, Id id) -> 
+      let live = UidS.mem id (lb u) in
+      let alias = match UidM.find_opt id (ab u) with
+        | Some Alias.SymPtr.MayAlias -> true
+        | _ -> false
+      in
+      live || alias
+  | _, Store _ -> true (* Safe default for other operands *)
+  | u, _ -> UidS.mem u (lb u)
 
 
 let dce_block (lb:uid -> Liveness.Fact.t) (ab:uid -> Alias.fact) (b:Ll.block) : Ll.block =
